@@ -1,0 +1,6 @@
+image: scans_leveled_colored.pgm
+resolution: 0.05
+origin: [-113.919, -70.2703, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196

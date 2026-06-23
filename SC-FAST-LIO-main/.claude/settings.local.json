@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mv /home/shui/LY/SC-FAST-LIO-main/src/livox_ros_driver/livox_ros_driver /home/shui/LY/SC-FAST-LIO-main/src/livox_ros_driver_pkg)",
+      "Bash(rm -rf /home/shui/LY/SC-FAST-LIO-main/src/livox_ros_driver)",
+      "Bash(mv /home/shui/LY/SC-FAST-LIO-main/src/livox_ros_driver_pkg /home/shui/LY/SC-FAST-LIO-main/src/livox_ros_driver)"
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(patchelf --set-rpath '/opt/ros/noetic/lib' /home/robot/go2_nav/lite_cog/nav/devel/lib/libglobalmap_server_nodelet.so)",
+      "Bash(patchelf --set-rpath '/opt/ros/noetic/lib' /home/robot/go2_nav/lite_cog/nav/devel/lib/libhdl_localization_nodelet.so)",
+      "Bash(kill -9 1812 1813 3907 3908 4466 4467 46516 46604 48218)",
+      "Bash(pkill -9 -f \"tsx\")",
+      "Bash(pkill -9 -f \"rosbridge\")",
+      "Bash(pkill -9 -f \"roslaunch\")",
+      "Bash(pkill -9 -f \"roscore\")"
+    ]
+  }
+}
