@@ -9,9 +9,9 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-MAP_DIR="/home/robot/go2_nav/lite_cog/system/map"
+MAP_DIR="/home/unitree/go2_nav/lite_cog/system/map"
 ACTIVE_DIR="$MAP_DIR/active"
-GATEWAY_DIR="/home/robot/go2_nav/ros_web_gui_app/gateway"
+GATEWAY_DIR="/home/unitree/go2_nav/ros_web_gui_app/gateway"
 MAPS_DIR="$GATEWAY_DIR/data/maps"
 DB="$GATEWAY_DIR/data/nav_web.sqlite"
 SLAM_PROC_PATTERN="${MAP_STOP_PROC_PATTERN:-fastlio_mapping}"
@@ -19,7 +19,7 @@ TAG="[map_stop_hook]"
 
 echo "$TAG ====== 停止建图并转换栅格地图 ======"
 
-LEVEL_PCD="/home/robot/go2_nav/lite_cog/system/tools/level_pcd"
+LEVEL_PCD="/home/unitree/go2_nav/lite_cog/system/tools/level_pcd"
 
 # ---- 1. 停止 SLAM 进程 ----
 echo "$TAG 1/6 停止 SLAM 进程 (pattern: $SLAM_PROC_PATTERN) ..."
@@ -51,7 +51,7 @@ fi
 echo "$TAG 2/6 查找 PCD 文件 ..."
 PCD_FILE=""
 LATEST_TS=0
-for f in "$MAP_DIR"/*/*.pcd "$ACTIVE_DIR"/*.pcd; do
+for f in "$MAP_DIR"/*.pcd "$MAP_DIR"/*/*.pcd "$ACTIVE_DIR"/*.pcd; do
     [ -f "$f" ] || continue
     base=$(basename "$f")
     # 跳过衍生文件
@@ -103,7 +103,7 @@ fi
 echo "$TAG 4/6 启动 pcd2grid 转换 ..."
 
 source /opt/ros/noetic/setup.bash
-source /home/robot/go2_nav/lite_cog/slam/devel/setup.bash
+source /home/unitree/go2_nav/lite_cog/slam/devel/setup.bash
 
 # 优先用现有 ROS master, 没有则临时起一个
 ROS_MASTER_PORT=11311

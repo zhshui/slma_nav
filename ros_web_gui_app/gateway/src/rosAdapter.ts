@@ -201,7 +201,7 @@ function quaternionToYaw(q: { x?: number; y?: number; z?: number; w?: number }) 
   return Math.atan2(siny, cosy)
 }
 
-function parsePointCloud2(pointsMsg: unknown): Array<{ x: number; y: number }> {
+function parsePointCloud2(pointsMsg: unknown): Array<{ x: number; y: number; z: number }> {
   const msg = pointsMsg as {
     fields?: Array<{ name?: string; offset?: number; datatype?: number }>
     point_step?: number
@@ -214,10 +214,13 @@ function parsePointCloud2(pointsMsg: unknown): Array<{ x: number; y: number }> {
   const fields = Array.isArray(msg.fields) ? msg.fields : []
   const xField = fields.find((f) => f.name === 'x')
   const yField = fields.find((f) => f.name === 'y')
+  const zField = fields.find((f) => f.name === 'z')
   const pointStep = Number(msg.point_step ?? 0)
   if (!xField || !yField || pointStep <= 0 || xField.datatype !== FLOAT32 || yField.datatype !== FLOAT32) {
     return []
   }
+
+  const hasZ = zField && zField.datatype === FLOAT32
 
   let bytes: Uint8Array
   if (Array.isArray(msg.data)) {
@@ -230,21 +233,24 @@ function parsePointCloud2(pointsMsg: unknown): Array<{ x: number; y: number }> {
 
   const xOffset = Number(xField.offset ?? 0)
   const yOffset = Number(yField.offset ?? 0)
+  const zOffset = hasZ ? Number(zField.offset ?? 0) : 0
   const littleEndian = !msg.is_bigendian
   const totalPoints = Number(msg.width ?? 0) * Number(msg.height ?? 1)
   const maxPoints = Math.min(totalPoints || Math.floor(bytes.length / pointStep), 256)
 
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  const output: Array<{ x: number; y: number }> = []
+  const maxFieldOffset = hasZ ? Math.max(xOffset, yOffset, zOffset) : Math.max(xOffset, yOffset)
+  const output: Array<{ x: number; y: number; z: number }> = []
   for (let i = 0; i < maxPoints; i++) {
     const base = i * pointStep
-    if (base + Math.max(xOffset, yOffset) + 4 > view.byteLength) {
+    if (base + maxFieldOffset + 4 > view.byteLength) {
       break
     }
     const x = view.getFloat32(base + xOffset, littleEndian)
     const y = view.getFloat32(base + yOffset, littleEndian)
-    if (Number.isFinite(x) && Number.isFinite(y)) {
-      output.push({ x, y })
+    const z = hasZ ? view.getFloat32(base + zOffset, littleEndian) : 0
+    if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
+      output.push({ x, y, z })
     }
   }
 

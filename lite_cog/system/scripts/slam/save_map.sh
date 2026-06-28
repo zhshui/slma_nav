@@ -6,8 +6,8 @@ read COMMAND
 case "$COMMAND" in
     "2")
         echo "YYYYYY"
-	source /home/robot/go2_nav/lite_cog/slam/devel/setup.bash;
-	rosrun map_server map_saver -f /home/robot/go2_nav/lite_cog/system/map/lite3
+	source /home/unitree/go2_nav/lite_cog/slam/devel/setup.bash;
+	rosrun map_server map_saver -f /home/unitree/go2_nav/lite_cog/system/map/lite3
         ;;
     *)
         echo "wrong"

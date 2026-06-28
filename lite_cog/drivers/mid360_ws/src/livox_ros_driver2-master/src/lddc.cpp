@@ -490,8 +490,8 @@ void Lddc::InitImuMsg(const ImuData& imu_data, ImuMsg& imu_msg, uint64_t& timest
   imu_msg.angular_velocity.x = imu_data.gyro_x;
   imu_msg.angular_velocity.y = imu_data.gyro_y;
   imu_msg.angular_velocity.z = imu_data.gyro_z;
-  // acc_x/y/z from Livox IMU are in g units (1g ≈ 9.80665 m/s²)
-  // sensor_msgs/Imu expects m/s², so convert here
+  // Livox IMU acc_x/y/z are in g units (1g = 9.80665 m/s^2)
+  // sensor_msgs/Imu expects m/s^2, so convert here
   constexpr float kGravity = 9.80665f;
   imu_msg.linear_acceleration.x = imu_data.acc_x * kGravity;
   imu_msg.linear_acceleration.y = imu_data.acc_y * kGravity;

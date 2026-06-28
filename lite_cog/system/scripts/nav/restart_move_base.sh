@@ -3,11 +3,11 @@
 # Restart move_base only (keep hdl_localization alive)
 # Called by gateway when STVL params change
 # ============================================
-LOG_DIR="/home/robot/go2_nav/lite_cog/system/scripts/nav/logs"
+LOG_DIR="/home/unitree/go2_nav/lite_cog/system/scripts/nav/logs"
 mkdir -p "$LOG_DIR"
 
 source /opt/ros/noetic/setup.bash
-source /home/robot/go2_nav/lite_cog/nav/devel/setup.bash
+source /home/unitree/go2_nav/lite_cog/nav/devel/setup.bash
 
 echo "[restart_mb] $(date) Killing old move_base ..."
 rosnode kill /move_base 2>/dev/null

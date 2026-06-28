@@ -52,7 +52,7 @@ bool Mid360CommandHandler::Init(bool is_view) {
 
 bool Mid360CommandHandler::Init(const std::map<uint32_t, LivoxLidarCfg>& custom_lidars_cfg_map) {
   for (const auto& it : custom_lidars_cfg_map) {
-    if (it.second.device_type == kLivoxLidarTypeMid360 && custom_lidars_.find(it.first) == custom_lidars_.end()) {
+    if ((it.second.device_type == kLivoxLidarTypeMid360 || it.second.device_type == kLivoxLidarTypeMid360S) && custom_lidars_.find(it.first) == custom_lidars_.end()) {
       custom_lidars_[it.first] = it.second;
     }
   }

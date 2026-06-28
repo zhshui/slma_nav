@@ -1,8 +1,8 @@
 #!/bin/bash
 # Sync SLAM-generated maps (PCD + PGM/YAML) to nav_web gateway
 
-SOURCE_DIR="/home/robot/go2_nav/lite_cog/system/map"
-GATEWAY_DIR="/home/robot/go2_nav/nav_web/gateway"
+SOURCE_DIR="/home/unitree/go2_nav/lite_cog/system/map"
+GATEWAY_DIR="/home/unitree/go2_nav/nav_web/gateway"
 MAPS_DIR="$GATEWAY_DIR/data/maps"
 DB="$GATEWAY_DIR/data/nav_web.sqlite"
 

@@ -1,0 +1,6 @@
+image: scans_12.pgm
+resolution: 0.1
+origin: [-3.30285, 2.35039, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196

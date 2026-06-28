@@ -14,7 +14,8 @@ MQ_USER = os.environ.get("MQ_USER", "server")
 MQ_PASS = os.environ.get("MQ_PASS", "5bP!8aS3$kD7vF2&")
 MQ_VHOST = os.environ.get("MQ_VHOST", "/")
 MQ_EXCHANGE = os.environ.get("MQ_EXCHANGE", "nav.exchange")
-MQ_CLIENT_ID = os.environ.get("MQ_CLIENT_ID", "nav-robot-xxx")
+import uuid
+MQ_CLIENT_ID = os.environ.get("MQ_CLIENT_ID", "nav-robot-xx1")
 
 filter_type = sys.argv[1] if len(sys.argv) > 1 else None
 
@@ -25,7 +26,7 @@ ICONS = {
 }
 
 def show(topic, data):
-    topic_suffix = topic.split(".")[-1]
+    topic_suffix = topic.split("/")[-1]
     if filter_type and topic_suffix != filter_type:
         return
     icon = ICONS.get(topic_suffix, "📡")
@@ -41,7 +42,7 @@ if MQ_TYPE == "mqtt":
         try: data = json.loads(msg.payload.decode("utf-8", errors="replace"))
         except: data = msg.payload.decode("utf-8", errors="replace")
         show(msg.topic, data)
-    client = mqtt.Client(client_id=f"{MQ_CLIENT_ID}-listen", protocol=mqtt.MQTTv311)
+    client = mqtt.Client(client_id=f"{MQ_CLIENT_ID}-listen-{uuid.uuid4().hex[:6]}", protocol=mqtt.MQTTv311)
     client.username_pw_set(MQ_USER, MQ_PASS)
     client.on_message = on_msg
     client.connect(MQ_HOST, MQ_PORT, keepalive=60)

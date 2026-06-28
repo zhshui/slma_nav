@@ -189,15 +189,23 @@ int main(int argc, char** argv) {
     // Dynamic ground Z max: bottom 30% of the cloud height
     double ground_z_max = z_min + z_range * 0.3;
 
+    // Auto-adjust when the hardcoded default (-2.0) is above ground_z_max
+    double ground_z_min_eff = opts.ground_z_min;
+    if (ground_z_min_eff > ground_z_max) {
+        ground_z_min_eff = z_min;
+        std::cout << "[level_pcd] Adjusted ground_z_min from " << opts.ground_z_min
+                  << " to " << z_min << " (cloud bottom)\n";
+    }
+
     pcl::PointCloud<pcl::PointXYZ>::Ptr ground_candidates(new pcl::PointCloud<pcl::PointXYZ>);
     {
         pcl::PassThrough<pcl::PointXYZ> pass;
         pass.setInputCloud(cloud_filtered);
         pass.setFilterFieldName("z");
-        pass.setFilterLimits(opts.ground_z_min, ground_z_max);
+        pass.setFilterLimits(ground_z_min_eff, ground_z_max);
         pass.filter(*ground_candidates);
     }
-    std::cout << "[level_pcd] Ground candidates (Z in [" << opts.ground_z_min
+    std::cout << "[level_pcd] Ground candidates (Z in [" << ground_z_min_eff
               << ", " << ground_z_max << "]): " << ground_candidates->size() << " points\n";
 
     if (ground_candidates->size() < 100) {
@@ -244,10 +252,10 @@ int main(int argc, char** argv) {
               << " / " << ground_candidates->size() << "\n";
 
     if (tilt_deg > opts.max_tilt_deg) {
-        std::cerr << "[level_pcd] WARNING: Detected plane tilt (" << tilt_deg
+        std::cerr << "[level_pcd] ERROR: Detected plane tilt (" << tilt_deg
                   << "°) exceeds --max-tilt-degrees (" << opts.max_tilt_deg
-                  << "°). The detected plane may not be ground.\n";
-        std::cerr << "[level_pcd] Proceeding anyway, but check the result.\n";
+                  << "°). Likely a wall, not ground. Aborting to keep original PCD.\n";
+        return 1;
     }
 
     // --- Compute leveling transform ---

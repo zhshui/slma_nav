@@ -140,6 +140,24 @@ geometry_msgs::PoseStamped msg_body_pose;
 shared_ptr<Preprocess> p_pre(new Preprocess());
 shared_ptr<ImuProcess> p_imu(new ImuProcess());
 
+// Z-axis Gravity Leveling: rotate PCD so gravity aligns with world -Z for level output
+M3D GetGravityLevelingRotation(state_ikfom &s) {
+    V3D grav_vec = s.grav.get_vect();
+    double grav_norm = grav_vec.norm();
+    if (grav_norm < 1e-6) return Eye3d;
+
+    V3D g_dir = grav_vec / grav_norm;
+    V3D g_target(0.0, 0.0, -1.0);
+
+    V3D rot_axis = g_dir.cross(g_target);
+    double sin_angle = rot_axis.norm();
+    if (sin_angle < 1e-5) return Eye3d;
+
+    rot_axis /= sin_angle;
+    double angle = std::asin(std::min(sin_angle, 1.0));
+    return Eigen::AngleAxisd(angle, rot_axis).toRotationMatrix();
+}
+
 void SigHandle(int sig)
 {
     flg_exit = true;
@@ -368,8 +386,10 @@ void livox_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
 
         double ts;
         memcpy(&ts, pt_data + off_timestamp, sizeof(double));
-        // Convert timestamp (seconds) to offset_time (microseconds)
-        pt.offset_time = (uint32_t)(ts * 1000000.0);
+        // Compute relative offset from scan header (seconds → nanoseconds), matching Livox CustomMsg format
+        double rel_ts = ts - msg->header.stamp.toSec();
+        if (rel_ts < 0.0) rel_ts = 0.0;
+        pt.offset_time = (uint32_t)(rel_ts * 1e9);  // nanoseconds, fits uint32 for scans up to ~4.3s
     }
 
     PointCloudXYZI::Ptr  ptr(new PointCloudXYZI());
@@ -1110,7 +1130,9 @@ int main(int argc, char** argv)
             pcd_index++;
             file_name = string("scans_") + to_string(pcd_index) + string(".pcd");
             all_points_dir = map_save_dir + string("/") + file_name;
+
         } while (access(all_points_dir.c_str(), F_OK) == 0);
+
         pcl::PCDWriter pcd_writer;
         cout << "current scan saved to /PCD/" << file_name << endl;
         pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);

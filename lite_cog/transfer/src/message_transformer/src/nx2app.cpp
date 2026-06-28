@@ -61,7 +61,7 @@ public:
     listen_addr_.sin_addr.s_addr = htonl(INADDR_ANY);
     bind(socket_fd_, (struct sockaddr *)&listen_addr_, sizeof(listen_addr_)) < 0;
 
-    logfile_.open("/home/shui/LY/lite_cog/transfer/nx2app_log.txt");
+    logfile_.open("/home/unitree/go2_nav/lite_cog/transfer/nx2app_log.txt");
     logfile_ << "start logging" << endl;
 
     joy_pub_ = nh.advertise<sensor_msgs::Joy>("commands/joy_raw", 1);    

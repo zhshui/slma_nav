@@ -72,7 +72,8 @@ public:
     nh_.param("smoothing_alpha_linear", alpha_linear_, 0.3);
     nh_.param("smoothing_alpha_angular", alpha_angular_, 0.3);
     nh_.param("angular_scale", angular_scale_, 1.5);
-    filter_linear_.setAlpha(alpha_linear_);
+    filter_linear_x_.setAlpha(alpha_linear_);
+    filter_linear_y_.setAlpha(alpha_linear_);
     filter_angular_.setAlpha(alpha_angular_);
   }
 
@@ -87,12 +88,13 @@ public:
     nh_.param("smoothing_alpha_linear", alpha_linear_, 0.3);
     nh_.param("smoothing_alpha_angular", alpha_angular_, 0.3);
     nh_.param("angular_scale", angular_scale_, 1.5);
-    filter_linear_.setAlpha(alpha_linear_);
+    filter_linear_x_.setAlpha(alpha_linear_);
+    filter_linear_y_.setAlpha(alpha_linear_);
     filter_angular_.setAlpha(alpha_angular_);
 
-    // EMA 低通滤波
-    double vx = filter_linear_.filter(vx_raw);
-    double vy = filter_linear_.filter(vy_raw);
+    // EMA 低通滤波（vx/vy 各自独立滤波器，互不污染）
+    double vx = filter_linear_x_.filter(vx_raw);
+    double vy = filter_linear_y_.filter(vy_raw);
     double vyaw = filter_angular_.filter(vyaw_raw) * angular_scale_;
 
     // 调用 SDK 的 Move 接口
@@ -129,7 +131,8 @@ public:
     } else if (cmd == "stop_move") {
       sport_client.StopMove();
       // 停止时自动清零全部滤波器
-      filter_linear_.reset();
+      filter_linear_x_.reset();
+      filter_linear_y_.reset();
       filter_angular_.reset();
       ROS_INFO(" -> StopMove (filters reset)");
     } else if (cmd == "rise_sit") {
@@ -154,7 +157,8 @@ public:
 
 private:
   ros::NodeHandle nh_;
-  EmaFilter filter_linear_;
+  EmaFilter filter_linear_x_;
+  EmaFilter filter_linear_y_;
   EmaFilter filter_angular_;
   double alpha_linear_;
   double alpha_angular_;

@@ -32,7 +32,8 @@ namespace lidar {
 
 const std::map<std::string, LivoxLidarDeviceType> dev_type_map = {
   {"HAP",     kLivoxLidarTypeIndustrialHAP},
-  {"MID360",  kLivoxLidarTypeMid360}
+  {"MID360",  kLivoxLidarTypeMid360},
+  {"MID360S", kLivoxLidarTypeMid360S}
 };
 
 
@@ -140,8 +141,20 @@ bool ParseCfgFile::Parse(std::shared_ptr<std::vector<LivoxLidarCfg>>& lidars_cfg
   }
 
   if (doc.HasMember("MID360") && doc["MID360"].IsObject()) {
-    uint8_t device_type = dev_type_map.at("MID360");    
+    uint8_t device_type = dev_type_map.at("MID360");
     const rapidjson::Value &object = doc["MID360"];
+
+    if (!ParseLidarCfg(object, device_type, lidars_cfg_ptr, custom_lidars_cfg_ptr)) {
+      if (raw_file) {
+        std::fclose(raw_file);
+      }
+      return false;
+    }
+  }
+
+  if (doc.HasMember("MID360S") && doc["MID360S"].IsObject()) {
+    uint8_t device_type = dev_type_map.at("MID360S");
+    const rapidjson::Value &object = doc["MID360S"];
 
     if (!ParseLidarCfg(object, device_type, lidars_cfg_ptr, custom_lidars_cfg_ptr)) {
       if (raw_file) {

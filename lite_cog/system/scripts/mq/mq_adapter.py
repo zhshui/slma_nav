@@ -28,7 +28,7 @@ MQ_USER = os.environ.get("MQ_USER", "server")
 MQ_PASS = os.environ.get("MQ_PASS", "5bP!8aS3$kD7vF2&")
 MQ_VHOST = os.environ.get("MQ_VHOST", "/")
 MQ_EXCHANGE = os.environ.get("MQ_EXCHANGE", "nav.exchange")
-MQ_CLIENT_ID = os.environ.get("MQ_CLIENT_ID", "nav-robot-xxx")
+MQ_CLIENT_ID = os.environ.get("MQ_CLIENT_ID", "nav-robot-xx1")
 GATEWAY_DIR = os.environ.get("GATEWAY_DIR", os.path.join(NAV_ROOT, "ros_web_gui_app/gateway"))
 DB_PATH = os.path.join(GATEWAY_DIR, "data", "nav_web.sqlite")
 SWITCH_HOOK = os.environ.get("MAP_SWITCH_HOOK", os.path.join(NAV_ROOT, "lite_cog/system/scripts/slam/switch_map_hook.sh"))
@@ -441,16 +441,8 @@ class Publisher:
         last_hb = 0
         while self._run and not rospy.is_shutdown():
             now = time.time()
+            # 1. status — 优先，不依赖 TF
             try:
-                pos, ori = self.tf_listener.lookupTransform(TF_MAP_FRAME, TF_BODY_FRAME, rospy.Time(0))
-                roll, pitch, yaw = tf.transformations.euler_from_quaternion([ori[0],ori[1],ori[2],ori[3]])
-                self._publish("pose", {"header": _hdr("nav_pose"),
-                    "body": {"frame_id": TF_MAP_FRAME, "position": {"x":pos[0],"y":pos[1],"z":pos[2]},
-                             "orientation": {"roll": roll, "pitch": pitch, "yaw": yaw},
-                             "localization_quality": "good"}})
-            except: pass
-            try:
-                # 从 gateway 读唯一状态值，不维护本地副本
                 ok, data = _call_gateway("/api/snapshot", method="GET")
                 gw_nav = "idle"; gw_cmd = ""
                 if ok:
@@ -460,34 +452,49 @@ class Publisher:
                         gw_nav = r.get("navStatus", "idle")
                         gw_mode = r.get("navMode", "none")
                         gw_cmd = "nav_multi" if gw_mode == "multi" else ("nav_single" if gw_mode == "single" else "")
-                        # 定位状态：体素障碍点云(voxel_grid)是否在更新
                         last_voxel = r.get("lastVoxelAt")
                         if last_voxel:
                             voxel_dt = (datetime.now(timezone.utc) - datetime.fromisoformat(last_voxel.replace("Z", "+00:00"))).total_seconds()
                             if gw_nav == "running" and voxel_dt > 3.0:
-                                gw_nav = "loc_lost"  # 导航中但定位丢失
+                                gw_nav = "loc_lost"
                     except: pass
-                self._gw_nav = gw_nav  # 缓存供 heartbeat 使用
+                self._gw_nav = gw_nav
                 self._publish("status", {"header": _hdr("nav_status"),
                     "body": {"nav_state": gw_nav, "current_cmd": gw_cmd,
                              "current_cmd_id": "", "current_map": state.current_map}})
             except: pass
+            # 2. heartbeat — 不依赖 TF，每 5 秒
+            if now - last_hb >= 5:
+                last_hb = now
+                try: self._publish("heartbeat", {"header": _hdr("heartbeat"),
+                    "body": {"online":True,"nav_state": getattr(self, '_gw_nav', 'idle')}})
+                except: pass
+            # 3. pose — 依赖 TF，加超时保护
+            try:
+                if self.tf_listener.waitForTransform(TF_MAP_FRAME, TF_BODY_FRAME, rospy.Time(0), rospy.Duration(0.5)):
+                    pos, ori = self.tf_listener.lookupTransform(TF_MAP_FRAME, TF_BODY_FRAME, rospy.Time(0))
+                    roll, pitch, yaw = tf.transformations.euler_from_quaternion([ori[0],ori[1],ori[2],ori[3]])
+                    self._publish("pose", {"header": _hdr("nav_pose"),
+                        "body": {"frame_id": TF_MAP_FRAME, "position": {"x":pos[0],"y":pos[1],"z":pos[2]},
+                                 "orientation": {"roll": roll, "pitch": pitch, "yaw": yaw},
+                                 "localization_quality": "good"}})
+            except: pass
+            # 4. route — 依赖 TF 和 move_base
             try:
                 if self.last_plan and self.last_plan.poses:
                     pts_raw = [{"x":p.pose.position.x,"y":p.pose.position.y} for p in self.last_plan.poses[:200]]
-                    # 计算路径长度
                     path_len = 0.0
                     for i in range(1, len(pts_raw)):
                         dx = pts_raw[i]["x"] - pts_raw[i-1]["x"]
                         dy = pts_raw[i]["y"] - pts_raw[i-1]["y"]
                         path_len += (dx*dx + dy*dy) ** 0.5
-                    # source: 当前位置, target: 最后目标点
                     source = {"x": 0.0, "y": 0.0, "yaw": 0.0}
                     target = {"x": 0.0, "y": 0.0, "yaw": 0.0}
                     try:
-                        pos, ori = self.tf_listener.lookupTransform(TF_MAP_FRAME, TF_BODY_FRAME, rospy.Time(0))
-                        _, _, yaw = tf.transformations.euler_from_quaternion([ori[0],ori[1],ori[2],ori[3]])
-                        source = {"x": round(pos[0], 3), "y": round(pos[1], 3), "yaw": round(yaw, 4)}
+                        if self.tf_listener.waitForTransform(TF_MAP_FRAME, TF_BODY_FRAME, rospy.Time(0), rospy.Duration(0.3)):
+                            pos, ori = self.tf_listener.lookupTransform(TF_MAP_FRAME, TF_BODY_FRAME, rospy.Time(0))
+                            _, _, yaw = tf.transformations.euler_from_quaternion([ori[0],ori[1],ori[2],ori[3]])
+                            source = {"x": round(pos[0], 3), "y": round(pos[1], 3), "yaw": round(yaw, 4)}
                     except: pass
                     lg = state.last_goal
                     if lg:
@@ -497,11 +504,6 @@ class Publisher:
                         "body": {"route_id": str(uuid.uuid4()), "source": source, "target": target,
                                  "path": pts_raw, "path_length": round(path_len, 2)}})
             except: pass
-            if now - last_hb >= 5:
-                last_hb = now
-                try: self._publish("heartbeat", {"header": _hdr("heartbeat"),
-                    "body": {"online":True,"nav_state": getattr(self, '_gw_nav', 'idle')}})
-                except: pass
             time.sleep(1.0)
     def start(self):
         t = threading.Thread(target=self.run, daemon=True); t.start()

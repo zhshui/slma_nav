@@ -147,11 +147,11 @@ const PORT = Number(process.env.GATEWAY_PORT ?? 8080)
 const mapDir = path.resolve(process.cwd(), 'data', 'maps')
 const navGoalRateWindowMs = Number(process.env.NAV_GOAL_RATE_LIMIT_WINDOW_MS ?? 5000)
 const navGoalRateLimitCount = Number(process.env.NAV_GOAL_RATE_LIMIT_COUNT ?? 20)
-const SLAM_SCRIPT = process.env.SLAM_START_SCRIPT || '/home/robot/go2_nav/SC-FAST-LIO-main/start_slam.sh'
-const NAV_SCRIPT  = process.env.NAV_START_SCRIPT  || '/home/robot/go2_nav/lite_cog/system/scripts/nav/start_nav.sh'
-const TASK_SCRIPT = process.env.TASK_START_SCRIPT || '/home/robot/go2_nav/lite_cog/pipeline/src/pipeline_tracking/scripts/Task.py'
-const LIDAR_SCRIPT = process.env.LIDAR_START_SCRIPT || '/home/robot/go2_nav/lite_cog/system/scripts/lidar/start_lidar.sh'
-const MOTION_SCRIPT = process.env.MOTION_START_SCRIPT || '/home/robot/go2_nav/go2_SDK_ws/go2_cmd_vel.sh'
+const SLAM_SCRIPT = process.env.SLAM_START_SCRIPT || '/home/unitree/go2_nav/SC-FAST-LIO-main/start_slam.sh'
+const NAV_SCRIPT  = process.env.NAV_START_SCRIPT  || '/home/unitree/go2_nav/lite_cog/system/scripts/nav/start_nav.sh'
+const TASK_SCRIPT = process.env.TASK_START_SCRIPT || '/home/unitree/go2_nav/lite_cog/pipeline/src/pipeline_tracking/scripts/Task.py'
+const LIDAR_SCRIPT = process.env.LIDAR_START_SCRIPT || '/home/unitree/go2_nav/lite_cog/system/scripts/lidar/start_lidar.sh'
+const MOTION_SCRIPT = process.env.MOTION_START_SCRIPT || '/home/unitree/go2_nav/go2_SDK_ws/go2_cmd_vel.sh'
 mkdirSync(mapDir, { recursive: true })
 
 // ── PNG generation from PGM (零依赖, 纯 zlib) ──
@@ -531,11 +531,11 @@ app.post('/api/mapping/stop', requireAuth, async (req, res) => {
         console.log('[gateway] sent SIGTERM to SLAM for graceful PCD save')
       } catch { }
     }
-    // Also SIGTERM any remaining fastlio_mapping processes
-    exec('pkill -SIGTERM -f "[f]astlio_mapping" 2>/dev/null', () => {})
+    // Also SIGTERM any remaining fastlio_mapping / run_mapping_online processes
+    exec('pkill -SIGTERM -f "[f]astlio_mapping" 2>/dev/null; pkill -SIGTERM -f "[r]un_mapping_online" 2>/dev/null', () => {})
   } else {
     killProcess(slamProcess, 'SLAM')
-    exec('pkill -f "[m]apping_mid360" 2>/dev/null; pkill -f "[f]astlio_mapping" 2>/dev/null; pkill -f "[g]ridmap" 2>/dev/null; pkill -f "[s]ave_map" 2>/dev/null; pkill -f "[l]ivox_ros_driver2" 2>/dev/null; pkill -f "[m]sg_MID360" 2>/dev/null; pkill -f "[r]viz" 2>/dev/null', () => {})
+    exec('pkill -f "[m]apping_mid360" 2>/dev/null; pkill -f "[m]apping_c16" 2>/dev/null; pkill -f "[f]astlio_mapping" 2>/dev/null; pkill -f "[r]un_mapping_online" 2>/dev/null; pkill -f "[g]ridmap" 2>/dev/null; pkill -f "[s]ave_map" 2>/dev/null; pkill -f "[l]ivox_ros_driver2" 2>/dev/null; pkill -f "[m]sg_MID360" 2>/dev/null; pkill -f "[r]viz" 2>/dev/null', () => {})
   }
   slamProcess = null
   runtimeState.mappingStatus = 'stopped'
@@ -642,7 +642,7 @@ app.post('/api/maps/save', requireAuth, async (req, res) => {
     return pcdDest
   }
 
-  const mapDir = process.env.MAP_DIR || '/home/robot/go2_nav/lite_cog/system/map'
+  const mapDir = process.env.MAP_DIR || '/home/unitree/go2_nav/lite_cog/system/map'
   const gridData = req.body?.data as { width: number; height: number; resolution: number; origin: { x: number; y: number }; data: number[] } | undefined
 
   let pgmPath = ''
@@ -695,7 +695,7 @@ app.get('/api/maps', requireAuth, (_req, res) => {
 
 // 列出所有可选的 PCD 文件
 app.get('/api/maps/pcds', requireAuth, (_req, res) => {
-  const mapDir = process.env.MAP_DIR || '/home/robot/go2_nav/lite_cog/system/map'
+  const mapDir = process.env.MAP_DIR || '/home/unitree/go2_nav/lite_cog/system/map'
   const pcds = findAllPcds(mapDir).sort((a, b) => b.mtimeMs - a.mtimeMs)
   res.json({
     pcds: pcds.map(p => ({
@@ -720,7 +720,7 @@ app.post('/api/maps/import', requireAuth, upload.single('mapFile'), (req, res) =
     return
   }
   const mapName = originalName.replace(/\.pgm$/i, '')
-  const mapDir = process.env.MAP_DIR || '/home/robot/go2_nav/lite_cog/system/map'
+  const mapDir = process.env.MAP_DIR || '/home/unitree/go2_nav/lite_cog/system/map'
   // 为导入地图创建同名文件夹
   const mapFolder = path.join(mapDir, mapName)
   mkdirSync(mapFolder, { recursive: true })
@@ -841,7 +841,7 @@ app.put('/api/maps/:id/rename', requireAuth, (req, res) => {
   const row = db.prepare('SELECT * FROM maps WHERE id = ?').get(req.params.id) as { name: string; yaml_path: string; pcd_path: string } | undefined
   if (!row) { res.status(404).json({ error: 'Map not found' }); return }
   const oldName = row.name
-  const mapDir = process.env.MAP_DIR || '/home/robot/go2_nav/lite_cog/system/map'
+  const mapDir = process.env.MAP_DIR || '/home/unitree/go2_nav/lite_cog/system/map'
 
   // 旧文件夹和新文件夹
   const oldFolder = path.dirname(row.yaml_path) // 例如 /home/.../map/oldName
@@ -913,7 +913,7 @@ app.post('/api/maps/:id/switch', requireAuth, async (req, res) => {
   res.json({ ok: true })
 
   // 切换后从 PGM 重新生成 PNG+PGM，更新 telemetry（等 hook 完成文件拷贝）
-  const MAP_ROOT = process.env.MAP_DIR || '/home/robot/go2_nav/lite_cog/system/map'
+  const MAP_ROOT = process.env.MAP_DIR || '/home/unitree/go2_nav/lite_cog/system/map'
   setTimeout(() => {
     const currentPgm = path.join(MAP_ROOT, 'current.pgm')
     if (existsSync(currentPgm)) {
@@ -1122,7 +1122,7 @@ app.post('/api/motion/stop', requireAuth, async (_req, res) => {
 })
 
 // Topology save: 保存拓扑点位到 Task.py 的 data 目录
-const TASK_DATA_DIR = process.env.TASK_DATA_DIR || '/home/robot/go2_nav/lite_cog/pipeline/src/pipeline_tracking/data'
+const TASK_DATA_DIR = process.env.TASK_DATA_DIR || '/home/unitree/go2_nav/lite_cog/pipeline/src/pipeline_tracking/data'
 
 app.post('/api/topology/save', requireAuth, (req, res) => {
   const { points } = req.body ?? {}
@@ -1404,7 +1404,7 @@ app.post('/api/map/publish', requireAuth, async (req, res) => {
     writeFileSync(path.join(staticMapsDir, 'live_map.png'), png)
 
     // Write to active/ dir + reload map_server so static_layer picks up edits
-    const MAP_ROOT = process.env.MAP_DIR || '/home/robot/go2_nav/lite_cog/system/map'
+    const MAP_ROOT = process.env.MAP_DIR || '/home/unitree/go2_nav/lite_cog/system/map'
     const activeDir = path.join(MAP_ROOT, 'active')
     mkdirSync(activeDir, { recursive: true })
     copyFileSync(path.join(staticMapsDir, 'live_map.pgm'), path.join(activeDir, 'current.pgm'))
@@ -1526,7 +1526,7 @@ app.post('/api/nav/param/reconfigure', requireAuth, async (req, res) => {
 // Unified nav param — rosparam (needs costmap clear or nav restart)
 // NOTE: inflation_radius / cost_scaling_factor use dynamic_reconfigure for immediate effect.
 //       obstacle_range / min_z / max_z trigger a move_base restart (3-5s interruption).
-const RESTART_MB_SCRIPT = process.env.RESTART_MB_SCRIPT || '/home/robot/go2_nav/lite_cog/system/scripts/nav/restart_move_base.sh'
+const RESTART_MB_SCRIPT = process.env.RESTART_MB_SCRIPT || '/home/unitree/go2_nav/lite_cog/system/scripts/nav/restart_move_base.sh'
 let restartMbTimer: NodeJS.Timeout | null = null
 const RESTART_MB_DEBOUNCE_MS = 2000  // batch rapid slider changes into one restart
 
@@ -1590,8 +1590,8 @@ app.post('/api/nav/param/rosparam', requireAuth, async (req, res) => {
 
     // ── Also persist to YAML config file so values survive nav restart ──
     const TEB_KEYS = new Set(['xy_goal_tolerance', 'yaw_goal_tolerance'])
-    const COSTMAP_YAML = process.env.COSTMAP_YAML || '/home/robot/go2_nav/lite_cog/nav/src/navigation/config/common_costmap_params.yaml'
-    const TEB_YAML = '/home/robot/go2_nav/lite_cog/nav/src/navigation/config/teb_local_planner_params.yaml'
+    const COSTMAP_YAML = process.env.COSTMAP_YAML || '/home/unitree/go2_nav/lite_cog/nav/src/navigation/config/common_costmap_params.yaml'
+    const TEB_YAML = '/home/unitree/go2_nav/lite_cog/nav/src/navigation/config/teb_local_planner_params.yaml'
     const YAML_FILE = TEB_KEYS.has(key) ? TEB_YAML : COSTMAP_YAML
     // Use frontend key directly as YAML key (frontend keys match YAML keys).
     // Do NOT derive from rosparam path suffix — e.g. min_obstacle_height maps to
@@ -1727,14 +1727,14 @@ setInterval(() => {
 async function bootstrap() {
   mkdirSync(path.resolve(process.cwd(), 'config'), { recursive: true })
   // Generate live map BEFORE starting server — avoids frontend seeing stale data
-  const MAP_ROOT = process.env.MAP_DIR || '/home/robot/go2_nav/lite_cog/system/map'
+  const MAP_ROOT = process.env.MAP_DIR || '/home/unitree/go2_nav/lite_cog/system/map'
   const currentPgm = path.join(MAP_ROOT, 'current.pgm')
   if (existsSync(currentPgm)) {
     regenerateMapPng(currentPgm)
   }
   await rosAdapter.start()
   mqConnect()
-  server.listen(PORT, () => {
+  server.listen({ port: PORT, reuseAddr: true }, () => {
     console.log(`Gateway listening on :${PORT}`)
   })
 }
