@@ -15,6 +15,8 @@ from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseWithCovarianceStamped, Twist
 from std_msgs.msg import String as RosString
+from sensor_msgs.msg import PointCloud2
+import sensor_msgs.point_cloud2 as pc2
 
 # ====== 默认环境变量（可通过 export 覆盖） ======
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -229,6 +231,9 @@ def h_nav_single(body, ref):
     if x is None: _ack(ref, "nav_single", "rejected", "need x/y/yaw"); return
     mid = body.get("map_id", "")
     if mid: _switch_and_init(mid)
+    # 同時啟動雷達和運控
+    _call_gateway("/api/lidar/start", {})
+    _call_gateway("/api/motion/start", {})
     # gateway 启导航栈 + 通过 gateway /api/nav/simple-goal 发 goal（和 web 2D Nav Goal 完全一致）
     # 始终用 "map" 坐标系，和 web 前端一致（camera_init 没有到 map 的 TF，move_base 会丢弃 goal）
     _gateway_nav_cmd("nav-only")
@@ -258,6 +263,9 @@ def h_nav_multi(body, ref):
     nav_pts = [{"id": wp.get("id", f"wp-{i}"), "x": float(wp["x"]), "y": float(wp["y"]),
                 "yaw": float(wp.get("yaw", 0))} for i, wp in enumerate(wps)]
     mq_publish("nav_points", {"header": _hdr("nav_points"), "body": {"points": nav_pts}})
+    # 同時啟動雷達和運控
+    _call_gateway("/api/lidar/start", {})
+    _call_gateway("/api/motion/start", {})
     # gateway 启导航栈 + Task.py，设状态为 running
     _gateway_nav_cmd("start")
     _ack(ref, "nav_multi", "accepted")
@@ -280,6 +288,17 @@ def h_nav_resume(body, ref):
         _gateway_nav_cmd("resume")
         h_nav_single(state.last_goal, ref)
     else: _ack(ref, "nav_resume", "rejected", "no previous goal")
+
+def h_switch_map(body, ref):
+    mid = body.get("map_id", "") or body.get("map_name", "")
+    if not mid:
+        _ack(ref, "switch_map", "rejected", "need map_id or map_name")
+        return
+    _switch_and_init(mid)
+    # 切换后推送更新后的地图列表
+    maps = get_map_list()
+    mq_publish("map_list", {"header": _hdr("map_list"), "body": {"maps": maps, "total": len(maps)}})
+    _ack(ref, "switch_map", "accepted")
 
 def h_relocalize(body, ref):
     pose = body.get("pose", {})
@@ -397,7 +416,8 @@ def h_motor_move(body, ref):
         cmd_vel_pub.publish(tw); _ack(ref, "motor_move", "accepted")
     else: _ack(ref, "motor_move", "rejected", "publisher not ready")
 
-HANDLERS = {"map_list": h_map_list, "nav_single": h_nav_single,
+HANDLERS = {"map_list": h_map_list, "switch_map": h_switch_map,
+            "nav_single": h_nav_single,
             "nav_multi": h_nav_multi, "nav_pause": h_nav_pause, "nav_resume": h_nav_resume,
             "nav_cancel": h_nav_cancel, "relocalize": h_relocalize,
             "motor_start": h_motor_start, "motor_stop": h_motor_stop,
@@ -428,13 +448,68 @@ class Publisher:
         self.last_plan = None
         self._run = False
         self.sub = None
+        self._pos_history = []  # [(timestamp, x, y), ...] 用于卡住检测
     def _init(self):
         self.tf_listener = tf.TransformListener()
         self.sub = rospy.Subscriber("/move_base/GlobalPlanner/plan", Path, self._on_plan)
+        self.cmd_vel_sub = rospy.Subscriber("/cmd_vel", Twist, self._on_cmd_vel)
+        self._last_cmd_vel_time = 0.0
+        self._cmd_vel_active = False
+        # 体素障碍物点云订阅
+        self._last_voxel_grid = []
+        self._last_voxel_time = 0.0
+        self._voxel_sub = rospy.Subscriber(
+            "/move_base/local_costmap/stvl_obstacle_layer/voxel_grid",
+            PointCloud2, self._on_voxel_grid)
+    def _check_stuck_by_displacement(self, stuck_window=3.0, stuck_threshold=0.3):
+        """通过位移判断是否卡住：在 stuck_window 秒内位移 < stuck_threshold 米视为卡住"""
+        now = time.time()
+        try:
+            if self.tf_listener.waitForTransform(TF_MAP_FRAME, TF_BODY_FRAME, rospy.Time(0), rospy.Duration(0.2)):
+                pos, _ = self.tf_listener.lookupTransform(TF_MAP_FRAME, TF_BODY_FRAME, rospy.Time(0))
+                self._pos_history.append((now, pos[0], pos[1]))
+        except: pass
+        # 清理超过 5 秒的旧记录
+        self._pos_history = [(t, x, y) for t, x, y in self._pos_history if now - t < 5.0]
+        if len(self._pos_history) < 2:
+            return False  # 数据不足，不判定为卡住
+        # 找到 stuck_window 秒前的位置
+        ref = self._pos_history[0]
+        for p in self._pos_history:
+            if now - p[0] <= stuck_window:
+                ref = p
+                break
+        dx = self._pos_history[-1][1] - ref[1]
+        dy = self._pos_history[-1][2] - ref[2]
+        disp = (dx*dx + dy*dy) ** 0.5
+        return disp < stuck_threshold
+    def _on_cmd_vel(self, m):
+        """追蹤最近一次非零速度指令"""
+        now = time.time()
+        if abs(m.linear.x) > 0.001 or abs(m.angular.z) > 0.001:
+            self._last_cmd_vel_time = now
+            self._cmd_vel_active = True
+        else:
+            # 零速度超过 0.5 秒视为停止
+            if now - self._last_cmd_vel_time > 0.5:
+                self._cmd_vel_active = False
     def _publish(self, topic_suffix, body):
         """线程安全发布"""
         mq_publish(topic_suffix, body)
     def _on_plan(self, m): self.last_plan = m
+    def _on_voxel_grid(self, m):
+        """接收 STVL 体素障碍点云，保存最新数据用于 MQTT 发布"""
+        try:
+            pts = []
+            # 限制点数，避免 MQTT 消息过大
+            MAX_VOXEL_PTS = 5000
+            for i, p in enumerate(pc2.read_points(m, field_names=("x", "y", "z"), skip_nans=True)):
+                if i >= MAX_VOXEL_PTS: break
+                pts.append({"x": float(p[0]), "y": float(p[1]), "z": float(p[2])})
+            self._last_voxel_grid = pts
+            self._last_voxel_time = time.time()
+        except Exception as e:
+            rospy.logwarn(f"[MQ] voxel_grid parse error: {e}")
     def run(self):
         self._init()
         self._run = True
@@ -457,6 +532,21 @@ class Publisher:
                             voxel_dt = (datetime.now(timezone.utc) - datetime.fromisoformat(last_voxel.replace("Z", "+00:00"))).total_seconds()
                             if gw_nav == "running" and voxel_dt > 3.0:
                                 gw_nav = "loc_lost"
+                        # 细化 running 状态：有速度指令且正在跟踪 → moving，已到达 → arrived
+                        if gw_nav == "running":
+                            try:
+                                mb_state = mb.state()
+                                if mb_state == 3:    # SUCCEEDED: 已到达目标点
+                                    gw_nav = "arrived"
+                                elif mb_state == 1 and self._cmd_vel_active:  # ACTIVE + 有速度指令
+                                    # 有速度输出但位移不足 → 原地踱步/转圈，判定为卡住
+                                    if self._check_stuck_by_displacement():
+                                        gw_nav = "stuck"
+                                    else:
+                                        gw_nav = "moving"
+                                else:
+                                    gw_nav = "stuck"   # 导航激活但机器人卡住/未运动
+                            except: pass
                     except: pass
                 self._gw_nav = gw_nav
                 self._publish("status", {"header": _hdr("nav_status"),
@@ -503,6 +593,15 @@ class Publisher:
                     self._publish("route", {"header": _hdr("nav_route"),
                         "body": {"route_id": str(uuid.uuid4()), "source": source, "target": target,
                                  "path": pts_raw, "path_length": round(path_len, 2)}})
+            except: pass
+            # 5. voxel_grid — 体素障碍点云，节流 2Hz
+            try:
+                pts = self._last_voxel_grid
+                if pts and now - getattr(self, '_last_voxel_pub', 0) >= 0.5:
+                    self._last_voxel_pub = now
+                    self._publish("voxel_grid", {"header": _hdr("voxel_grid"),
+                        "body": {"points": pts, "count": len(pts),
+                                 "frame_id": "map"}})
             except: pass
             time.sleep(1.0)
     def start(self):

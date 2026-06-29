@@ -1,3 +1,4 @@
+import compression from 'compression'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import express from 'express'
@@ -11,7 +12,7 @@ import { deflateSync } from 'node:zlib'
 import { spawn, exec, execFile, execSync, type ChildProcess } from 'node:child_process'
 import path from 'node:path'
 import { WebSocketServer } from 'ws'
-import { connect, type Channel } from 'amqplib'
+import mqtt, { type MqttClient } from 'mqtt'
 import db from './db.js'
 import { getUserById, requireAuth, requireRole, signToken, type AuthedRequest } from './auth.js'
 import { newId, runtimeState, updateMockPoseAndLidar, LARGE_MAP_CELL_THRESHOLD } from './state.js'
@@ -20,47 +21,55 @@ import { createRosAdapterFromEnv } from './rosAdapter.js'
 dotenv.config()
 const rosAdapter = createRosAdapterFromEnv()
 
-// ====== MQ 发布 ======
+// ====== MQTT 发布/订阅 ======
 const MQ_HOST = process.env.MQ_HOST || '127.0.0.1'
-const MQ_PORT = Number(process.env.MQ_PORT || '5672')
+const MQ_PORT = Number(process.env.MQ_PORT || '1883')
 const MQ_USER = process.env.MQ_USER || 'nav'
 const MQ_PASS = process.env.MQ_PASS || 'nav123'
-const MQ_VHOST = process.env.MQ_VHOST || '/'
-const MQ_EXCHANGE = process.env.MQ_EXCHANGE || 'nav.exchange'
 const MQ_CLIENT_ID = process.env.MQ_CLIENT_ID || 'robot-001'
-let mqChannel: Channel | null = null
-let mqConn: any = null
+let mqClient: MqttClient | null = null
 let lastMqPoseAt = 0   // MQ 位姿最后更新时间戳
 
-async function mqConnect(): Promise<Channel | null> {
+function mqConnect(): MqttClient | null {
+  if (mqClient?.connected) return mqClient
   try {
-    if (mqChannel && mqConn) return mqChannel
-    mqConn = await connect({
-      hostname: MQ_HOST, port: MQ_PORT,
-      username: MQ_USER, password: MQ_PASS,
-      vhost: MQ_VHOST, heartbeat: 30,
+    const clientId = `gateway-${MQ_CLIENT_ID}-${Date.now()}`
+    const url = `mqtt://${MQ_HOST}:${MQ_PORT}`
+    mqClient = mqtt.connect(url, {
+      username: MQ_USER,
+      password: MQ_PASS,
+      clientId,
+      keepalive: 30,
+      clean: true,
+      reconnectPeriod: 5000,
     })
-    mqChannel = await mqConn.createChannel()
-    await mqChannel!.assertExchange(MQ_EXCHANGE, 'topic', { durable: true })
 
-    // ---- 订阅 MQ 状态 & 位姿 & 路线（mq_adapter → Web） ----
-    const q = await mqChannel!.assertQueue('', { exclusive: true, autoDelete: true })
-    await mqChannel!.bindQueue(q.queue, MQ_EXCHANGE, `nav.${MQ_CLIENT_ID}.status`)
-    await mqChannel!.bindQueue(q.queue, MQ_EXCHANGE, `nav.${MQ_CLIENT_ID}.pose`)
-    await mqChannel!.bindQueue(q.queue, MQ_EXCHANGE, `nav.${MQ_CLIENT_ID}.route`)
-    await mqChannel!.bindQueue(q.queue, MQ_EXCHANGE, `nav.${MQ_CLIENT_ID}.nav_points`)
-    await mqChannel!.consume(q.queue, (msg) => {
-      if (!msg) return
+    mqClient.on('connect', () => {
+      console.log('[gateway] MQTT connected')
+      // 订阅 mq_adapter 发布的遥测主题
+      mqClient!.subscribe([
+        `nav/${MQ_CLIENT_ID}/status`,
+        `nav/${MQ_CLIENT_ID}/pose`,
+        `nav/${MQ_CLIENT_ID}/route`,
+        `nav/${MQ_CLIENT_ID}/nav_points`,
+        `nav/${MQ_CLIENT_ID}/voxel_grid`,
+      ], { qos: 1 }, (err) => {
+        if (err) console.warn('[gateway] MQTT subscribe error:', err)
+        else console.log('[gateway] MQTT subscribed status/pose/route/nav_points/voxel_grid')
+      })
+    })
+
+    mqClient.on('message', (_topic, payload) => {
       try {
-        const data = JSON.parse(msg.content.toString())
+        const data = JSON.parse(payload.toString())
         const hdr = data.header || {}
         const body = data.body || {}
         if (hdr.msg_type === 'nav_status') {
           const ns = body.nav_state as string
-          console.log(`[gateway] MQ ← status: ${ns}`)
-          const map: Record<string, string> = { idle: 'idle', running: 'running', paused: 'paused', completed: 'stopped', failed: 'stopped', cancelled: 'stopped' }
+          console.log(`[gateway] MQTT ← status: ${ns}`)
+          const map: Record<string, string> = { idle: 'idle', running: 'running', moving: 'running', arrived: 'running', stuck: 'running', paused: 'paused', completed: 'stopped', failed: 'stopped', cancelled: 'stopped', loc_lost: 'running' }
           const mapped = map[ns] || ns
-          // gateway 是状态源，MQ status 仅作外部遥测回显，不覆盖本地主动设置的状态
+          // gateway 是状态源，MQTT status 仅作外部遥测回显，不覆盖本地主动设置的状态
           const localActive = navProcess !== null || taskProcess !== null
           if (!localActive && runtimeState.navStatus !== mapped) {
             runtimeState.navStatus = mapped as 'idle' | 'running' | 'paused' | 'stopped'
@@ -103,25 +112,34 @@ async function mqConnect(): Promise<Channel | null> {
           if (pts.length >= 2) {
             runtimeState.globalPlan = pts
           }
+        } else if (hdr.msg_type === 'voxel_grid') {
+          const pts = (body.points || []) as Array<{x: number; y: number; z: number}>
+          if (pts.length > 0) {
+            runtimeState.voxelGrid = pts
+            runtimeState.lastVoxelAt = new Date().toISOString()
+          }
         }
       } catch { /* 忽略解析错误 */ }
-    }, { noAck: true })
+    })
 
-    // 重连处理
-    mqConn.on('close', () => { mqChannel = null; mqConn = null })
-    mqConn.on('error', () => { mqChannel = null; mqConn = null })
-    console.log('[gateway] MQ connected + subscribed status/pose')
-    return mqChannel
+    mqClient.on('close', () => {
+      console.log('[gateway] MQTT disconnected')
+    })
+    mqClient.on('error', (e) => {
+      console.warn('[gateway] MQTT error:', (e as Error).message)
+    })
+
+    return mqClient
   } catch (e) {
-    console.warn('[gateway] MQ connect failed:', e)
-    mqChannel = null; mqConn = null
+    console.warn('[gateway] MQTT connect failed:', e)
+    mqClient = null
     return null
   }
 }
 
-async function mqPublish(suffix: string, msgType: string, body: Record<string, unknown>): Promise<boolean> {
-  const ch = await mqConnect()
-  if (!ch) return false
+function mqPublish(suffix: string, msgType: string, body: Record<string, unknown>): boolean {
+  const client = mqConnect()
+  if (!client) return false
   try {
     const mid = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
     const msg = {
@@ -130,12 +148,14 @@ async function mqPublish(suffix: string, msgType: string, body: Record<string, u
       },
       body: { ...body, ref_msg_id: mid },
     }
-    const routingKey = `nav.${MQ_CLIENT_ID}.${suffix}`
-    ch.publish(MQ_EXCHANGE, routingKey, Buffer.from(JSON.stringify(msg)))
-    console.log(`[gateway] MQ → ${routingKey}`)
+    const topic = `nav/${MQ_CLIENT_ID}/${suffix}`
+    client.publish(topic, JSON.stringify(msg), { qos: 1 }, (err) => {
+      if (err) console.error('[gateway] MQTT publish error:', err)
+    })
+    console.log(`[gateway] MQTT → ${topic}`)
     return true
   } catch (e) {
-    console.error('[gateway] MQ publish error:', e)
+    console.error('[gateway] MQTT publish error:', e)
     return false
   }
 }
@@ -333,6 +353,7 @@ function killProcess(proc: ChildProcess | null, label: string): boolean {
   } catch { return false }
 }
 
+app.use(compression())
 app.use(cors())
 app.use(express.json({ limit: '256mb' }))
 
@@ -908,7 +929,7 @@ app.post('/api/maps/:id/switch', requireAuth, async (req, res) => {
   // MQ 通知: 地图切换成功（只发切到的那张）
   mqPublish('map_list', 'map_list', {
     switched_to: { id: row.id, name: row.name },
-  }).catch(() => {})
+  })
 
   res.json({ ok: true })
 
@@ -1721,7 +1742,7 @@ setInterval(() => {
 
   diff.ts = runtimeState.lastSnapshotAt
   broadcast('telemetry', diff)
-}, 200)  // 5Hz — 外部设备更新更流畅
+}, 500)  // 2Hz — 降低遥测频率减少卡顿
 
 // Bootstrap
 async function bootstrap() {

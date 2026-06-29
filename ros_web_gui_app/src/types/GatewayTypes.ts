@@ -66,7 +66,7 @@ export interface Snapshot {
     lidar: Array<{ x: number; y: number }>
     globalPlan: Array<{ x: number; y: number }>
     localPlan: Array<{ x: number; y: number }>
-    voxelGrid: Array<{ x: number; y: number }>
+    voxelGrid: Array<{ x: number; y: number; z: number }>
     lastSnapshotAt: string
   }
   navPoints: NavPoint[]

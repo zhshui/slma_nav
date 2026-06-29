@@ -236,7 +236,7 @@ function parsePointCloud2(pointsMsg: unknown): Array<{ x: number; y: number; z: 
   const zOffset = hasZ ? Number(zField.offset ?? 0) : 0
   const littleEndian = !msg.is_bigendian
   const totalPoints = Number(msg.width ?? 0) * Number(msg.height ?? 1)
-  const maxPoints = Math.min(totalPoints || Math.floor(bytes.length / pointStep), 256)
+  const maxPoints = Math.min(totalPoints || Math.floor(bytes.length / pointStep), 20000)
 
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   const maxFieldOffset = hasZ ? Math.max(xOffset, yOffset, zOffset) : Math.max(xOffset, yOffset)

@@ -5,7 +5,7 @@
 消息格式与 mq_adapter.py 兼容：{header: {msg_type: "nav_cmd"}, body: {cmd: ..., ...}}
 
 可用命令（mq_adapter HANDLERS）：
-  导航: map_list, nav_single, nav_multi, nav_pause, nav_resume, nav_cancel, relocalize
+  导航: map_list, switch_map, nav_single, nav_multi, nav_pause, nav_resume, nav_cancel, relocalize
   运控: motor_start, motor_stop, motor_stand, motor_sit, motor_damp, motor_move
 
 示例：
@@ -42,12 +42,12 @@ CMD_TOPIC = f"nav{_SEP}{MQ_CLIENT_ID}{_SEP}cmd"
 # ═══════════════════════════════════════════════════════════════
 MSG = json.dumps({
     "header": {"msg_type": "nav_cmd"},
-    "body": {
+  "body": {
     "cmd": "nav_single",
-    "map_id": "scans_3",
-    "goal": { "x": -0.1, "y": -3.7, "yaw": 1.57, "frame_id": "map" },
+    "map_id": "scans_4",
+    "goal": { "x": 12.34, "y": -5.67, "yaw": 1.57, "frame_id": "camera_init" },
     "options": { "timeout_ms": 60000, "retry_count": 0 }
-    }
+  }
 })
 # ═══════════════════════════════════════════════════════════════
 

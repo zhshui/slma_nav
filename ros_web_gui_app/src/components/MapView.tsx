@@ -99,11 +99,12 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
         merged.voxel_grid.enabled = true;
         merged.voxel_grid.targetFrame = 'map';
       }
-      // 强制 robot 启用 + 匹配实际 TF 树 camera_init→body
+      // 强制 robot 启用；保留已保存的 frame 配置（默认 map→base_link）
       if (merged.robot) {
         merged.robot.enabled = true;
-        merged.robot.mapFrame = 'camera_init';
-        merged.robot.baseFrame = 'body';
+        // 确保 mapFrame/baseFrame 有效，避免加载的配置使用了不存在的坐标系
+        if (!merged.robot.mapFrame) merged.robot.mapFrame = 'map';
+        if (!merged.robot.baseFrame) merged.robot.baseFrame = 'base_link';
       }
       return merged;
     }
@@ -1135,7 +1136,12 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
             <span className="CoordinateValue">
               {robotPos
                 ? `X: ${robotPos.x.toFixed(3)}, Y: ${robotPos.y.toFixed(3)}, θ: ${robotPos.theta.toFixed(3)}`
-                : '-'}
+                : (() => {
+                    const gwPose = gatewayCtx.snapshot?.runtime?.tfPose;
+                    return gwPose
+                      ? `X: ${gwPose.x.toFixed(3)}, Y: ${gwPose.y.toFixed(3)}, θ: ${gwPose.yaw.toFixed(3)} (网关)`
+                      : '-';
+                  })()}
             </span>
           </div>
         )}

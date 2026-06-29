@@ -178,23 +178,34 @@ int main(int argc, char** argv) {
         cloud_filtered = cloud;
     }
 
-    // --- Rough Z filter: only consider likely ground-level points ---
-    // Ground should be near the bottom of the cloud
-    pcl::PointXYZ min_pt, max_pt;
-    pcl::getMinMax3D(*cloud_filtered, min_pt, max_pt);
-    double z_min = min_pt.z;
-    double z_max = max_pt.z;
-    double z_range = z_max - z_min;
+    // --- Robust Z percentile for ground candidate selection ---
+    // Use percentile-based range to avoid outlier contamination
+    // (e.g. a few stray points at Z=-5 would skew min/max entirely)
+    std::vector<float> z_values;
+    z_values.reserve(cloud_filtered->size());
+    for (const auto& pt : cloud_filtered->points)
+        z_values.push_back(pt.z);
+    std::sort(z_values.begin(), z_values.end());
 
-    // Dynamic ground Z max: bottom 30% of the cloud height
-    double ground_z_max = z_min + z_range * 0.3;
+    double z_p01 = z_values[std::max(size_t(0), std::min(z_values.size() - 1,
+                              size_t(z_values.size() * 0.01)))];   // 1st percentile
+    double z_p30 = z_values[std::max(size_t(0), std::min(z_values.size() - 1,
+                              size_t(z_values.size() * 0.30)))];   // 30th percentile
+    double z_p99 = z_values[std::max(size_t(0), std::min(z_values.size() - 1,
+                              size_t(z_values.size() * 0.99)))];   // 99th percentile
 
-    // Auto-adjust when the hardcoded default (-2.0) is above ground_z_max
-    double ground_z_min_eff = opts.ground_z_min;
-    if (ground_z_min_eff > ground_z_max) {
-        ground_z_min_eff = z_min;
-        std::cout << "[level_pcd] Adjusted ground_z_min from " << opts.ground_z_min
-                  << " to " << z_min << " (cloud bottom)\n";
+    // Ground candidates: bottom 30% of the *robust* Z span (P1 → P30)
+    double ground_z_min_eff = z_p01;
+    double ground_z_max = z_p30;
+
+    std::cout << "[level_pcd] Z percentiles: P1=" << z_p01 << " P30=" << z_p30
+              << " P99=" << z_p99 << " (robust min/max)\n";
+
+    // Fallback if percentiles are degenerate (flat cloud)
+    if (ground_z_max - ground_z_min_eff < 0.01) {
+        ground_z_min_eff = z_values.front();
+        ground_z_max = z_values.back();
+        std::cout << "[level_pcd] Percentile range too narrow, using full Z range\n";
     }
 
     pcl::PointCloud<pcl::PointXYZ>::Ptr ground_candidates(new pcl::PointCloud<pcl::PointXYZ>);
@@ -280,6 +291,7 @@ int main(int argc, char** argv) {
     std::cout << "[level_pcd] Leveled PCD saved to: " << opts.output << "\n";
 
     // Report Z range change
+    pcl::PointXYZ min_pt, max_pt;
     pcl::getMinMax3D(*cloud, min_pt, max_pt);
     pcl::PointXYZ lvl_min, lvl_max;
     pcl::getMinMax3D(*leveled, lvl_min, lvl_max);

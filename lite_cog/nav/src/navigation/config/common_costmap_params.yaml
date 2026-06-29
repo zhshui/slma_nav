@@ -52,14 +52,14 @@ stvl_obstacle_layer:
     inf_is_valid: false           #default false, for laser scans    
     marking: true
     clearing: true
-    min_z: -0.4
+    min_z: -0.2
     max_z: 3.0
     vertical_fov_angle: 0.56
     vertical_fov_padding: 0.0
     horizontal_fov_angle: 6.29
     decay_acceleration: 5
     filter: voxel               #default passthrough, apply "voxel", "passthrough", or no filter to sensor data, recommended to have at one filter on
-    voxel_min_points: 3           #default 0, minimum points per voxel for voxel filter
+    voxel_min_points: 3            #default 0, minimum points per voxel for voxel filter
     clear_after_reading: false    #default false, clear the buffer after the layer gets readings from it
     enabled: true
     model_type: 1

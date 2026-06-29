@@ -1,6 +1,6 @@
 # 导航系统 MQ 接口文档
 
-> v2.3 | 2026-06-15 | AMQP 默认；
+> v2.4 | 2026-06-28 | 新增 switch_map 指令
 
 ---
 
@@ -139,11 +139,31 @@
 { "body": { "cmd": "motor_stop" } }
 ```
 
+### 3.7 地图切换 ✅
+
+> 独立的地图切换指令。切换后发布 `initialpose` 到原点，并推送更新后的 `map_list`。不需要导航。
+
+```json
+{
+  "body": {
+    "cmd": "switch_map",
+    "map_id": "map-uuid"
+  }
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `map_id` | string | 二选一 | 地图 ID（与 `map_name` 二选一） |
+| `map_name` | string | 二选一 | 地图名称（与 `map_id` 二选一） |
+
+**响应**: `cmd/ack` 确认 + 推送更新后的 `map_list`
+
 ### 指令字段
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `cmd` | string | 是 | `nav_single` `nav_multi` `nav_pause` `nav_resume` `nav_cancel` `map_list` `relocalize` `motor_start` `motor_stop` |
+| `cmd` | string | 是 | `nav_single` `nav_multi` `nav_pause` `nav_resume` `nav_cancel` `map_list` `switch_map` `relocalize` `motor_start` `motor_stop` |
 | `goal.x/y/yaw` | number | — | 目标坐标(米)/朝向(弧度) |
 | `goal.frame_id` | string | 否 | 坐标系，默认 `camera_init` |
 | `goal.yaw_tolerance` | number | 否 | 朝向容差，默认 0.087 |
@@ -284,7 +304,7 @@
 | 功能 | MQ | 说明 |
 |------|:--:|------|
 | 地图列表查询 | ✅ | 读取 gateway SQLite 数据库 |
-| 地图切换 | ✅ | `nav_single`/`nav_multi` 传 `map_id` 时自动切换 |
+| 地图切换 | ✅ | `switch_map` 独立指令 + `nav_single`/`nav_multi` 传 `map_id` 自动切换 |
 | 单点导航 | ✅ | 通过 `move_base` action |
 | 多点导航 | ✅ | 写 waypoint JSON → 启动 `Task.py` |
 | 暂停 | ✅ | cancel move_base goal |
@@ -318,7 +338,7 @@ python3 lite_cog/system/scripts/mq/test_mq.py   # 20/20 passed
 python3 lite_cog/system/scripts/mq/mq_tester.py
 
 # 集成测试 (需要 RabbitMQ + ROS)
-# 已验证: map_list, nav_single, nav_multi, nav_pause, nav_cancel,
+# 已验证: map_list, switch_map, nav_single, nav_multi, nav_pause, nav_cancel,
 #         relocalize, motor_start, motor_stop, status/pose/route 推送, 未知指令拒绝
 ```
 
