@@ -1199,7 +1199,10 @@ app.post('/api/topology/save', requireAuth, (req, res) => {
 // 启动 Task.py 进程（多点导航顺序执行）
 function startTaskProcess() {
   const gen = navGeneration  // 记录当前 generation
-  taskProcess = spawn('bash', ['-c', `source /opt/ros/noetic/setup.bash && source /home/robot/go2_nav/lite_cog/pipeline/devel/setup.bash && python3 ${TASK_SCRIPT} 2>&1 | tee /tmp/task.log`], {
+  const logFile = '/tmp/task.log'
+  const taskCmd = `source /opt/ros/noetic/setup.bash && source /home/unitree/go2_nav/lite_cog/pipeline/devel/setup.bash && python3 ${TASK_SCRIPT} 2>&1 | tee ${logFile}`
+  console.log(`[gateway] TASK cmd: ${taskCmd}`)
+  taskProcess = spawn('bash', ['-c', taskCmd], {
     detached: true,
     stdio: 'ignore',
   })

@@ -128,6 +128,14 @@ if((NOT LIVOX_SDK_LIBRARY) OR (NOT EXISTS ${LIVOX_SDK_LIBRARY}))
 
 else()
 	message("find livox sdk library success")
+		include_directories(
+			./
+			${CMAKE_CURRENT_SOURCE_DIR}/Livox-SDK/sdk_core/include
+		)
+		link_directories(
+			./
+			${CMAKE_CURRENT_SOURCE_DIR}/Livox-SDK/build/sdk_core
+		)
 endif()
 
 ## PCL library

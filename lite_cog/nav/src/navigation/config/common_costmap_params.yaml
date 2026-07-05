@@ -13,8 +13,8 @@ publish_frequency: 3
 resolution: 0.1
 origin_x: 0
 origin_y: 0
-footprint: [[-0.20, -0.15], [-0.20, 0.15], [0.20, 0.15], [0.20, -0.15]]
-footprint_padding: 0.1
+footprint: [[-0.020, -0.015], [-0.020, 0.015], [0.020, 0.015], [0.020, -0.015]]
+footprint_padding: 0.05
 
 static_layer:
   map_topic: map
@@ -42,24 +42,24 @@ stvl_obstacle_layer:
   map_save_duration:     60     #default 60s, how often to autosave
 
   livox_lidar:
-    topic: /livox/lidar
+    topic: /livox/lidar_filtered
     sensor_frame: livox_frame
     observation_persistence: 0.0  #default 0, use all measurements taken during now-value, 0=latest 
     expected_update_rate: 10.0     #default 0, if not updating at this rate at least, remove from buffer
     data_type: PointCloud2
-    min_obstacle_height: -0.1      #default 0, meters
+    min_obstacle_height: -0.15      #default 0, meters
     max_obstacle_height: 1.5      #defaule 3, meters
     inf_is_valid: false           #default false, for laser scans    
     marking: true
     clearing: true
-    min_z: -0.2
+    min_z: 0.2
     max_z: 3.0
     vertical_fov_angle: 0.56
     vertical_fov_padding: 0.0
     horizontal_fov_angle: 6.29
     decay_acceleration: 5
     filter: voxel               #default passthrough, apply "voxel", "passthrough", or no filter to sensor data, recommended to have at one filter on
-    voxel_min_points: 3            #default 0, minimum points per voxel for voxel filter
+    voxel_min_points: 3           #default 0, minimum points per voxel for voxel filter
     clear_after_reading: false    #default false, clear the buffer after the layer gets readings from it
     enabled: true
     model_type: 1

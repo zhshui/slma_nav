@@ -71,6 +71,8 @@ double T1[MAXN], s_plot[MAXN], s_plot2[MAXN], s_plot3[MAXN], s_plot4[MAXN], s_pl
 double match_time = 0, solve_time = 0, solve_const_H_time = 0;
 int    kdtree_size_st = 0, kdtree_size_end = 0, add_point_size = 0, kdtree_delete_counter = 0;
 bool   runtime_pos_log = false, pcd_save_en = false, time_sync_en = false, extrinsic_est_en = true, path_en = true;
+bool   rear_filter_en = false;
+float  rear_filter_angle = 60.0;  // 后方过滤扇形角度(度)
 /**************************/
 
 float res_last[100000] = {0.0};
@@ -139,24 +141,6 @@ geometry_msgs::PoseStamped msg_body_pose;
 
 shared_ptr<Preprocess> p_pre(new Preprocess());
 shared_ptr<ImuProcess> p_imu(new ImuProcess());
-
-// Z-axis Gravity Leveling: rotate PCD so gravity aligns with world -Z for level output
-M3D GetGravityLevelingRotation(state_ikfom &s) {
-    V3D grav_vec = s.grav.get_vect();
-    double grav_norm = grav_vec.norm();
-    if (grav_norm < 1e-6) return Eye3d;
-
-    V3D g_dir = grav_vec / grav_norm;
-    V3D g_target(0.0, 0.0, -1.0);
-
-    V3D rot_axis = g_dir.cross(g_target);
-    double sin_angle = rot_axis.norm();
-    if (sin_angle < 1e-5) return Eye3d;
-
-    rot_axis /= sin_angle;
-    double angle = std::asin(std::min(sin_angle, 1.0));
-    return Eigen::AngleAxisd(angle, rot_axis).toRotationMatrix();
-}
 
 void SigHandle(int sig)
 {
@@ -319,6 +303,8 @@ double timediff_lidar_wrt_imu = 0.0;
 bool   timediff_set_flg = false;
 void livox_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
 {
+    static int pcl_cnt = 0;
+    if (pcl_cnt++ < 3) ROS_INFO("[pcl_cb] received LiDAR frame, pts=%d", msg->width * msg->height);
     mtx_buffer.lock();
     double preprocess_start_time = omp_get_wtime();
     scan_count ++;
@@ -386,10 +372,8 @@ void livox_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
 
         double ts;
         memcpy(&ts, pt_data + off_timestamp, sizeof(double));
-        // Compute relative offset from scan header (seconds → nanoseconds), matching Livox CustomMsg format
-        double rel_ts = ts - msg->header.stamp.toSec();
-        if (rel_ts < 0.0) rel_ts = 0.0;
-        pt.offset_time = (uint32_t)(rel_ts * 1e9);  // nanoseconds, fits uint32 for scans up to ~4.3s
+        // Convert timestamp (seconds) to offset_time (microseconds)
+        pt.offset_time = (uint32_t)(ts * 1000000.0);
     }
 
     PointCloudXYZI::Ptr  ptr(new PointCloudXYZI());
@@ -402,8 +386,10 @@ void livox_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
     sig_buffer.notify_all();
 }
 
-void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in) 
+void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
 {
+    static int imu_cnt = 0;
+    if (imu_cnt++ < 3) ROS_INFO("[imu_cb] received IMU frame");
     publish_count ++;
     // cout<<"IMU got at: "<<msg_in->header.stamp.toSec()<<endl;
     sensor_msgs::Imu::Ptr msg(new sensor_msgs::Imu(*msg_in));
@@ -437,6 +423,9 @@ int    scan_num = 0;
 bool sync_packages(MeasureGroup &meas)
 {
     if (lidar_buffer.empty() || imu_buffer.empty()) {
+        static int empty_cnt = 0;
+        if (empty_cnt++ < 5 || empty_cnt % 100 == 0)
+            ROS_INFO("[sync] waiting: lidar_buf=%zu imu_buf=%zu", lidar_buffer.size(), imu_buffer.size());
         return false;
     }
 
@@ -463,6 +452,21 @@ bool sync_packages(MeasureGroup &meas)
             // std::cout << "1 " << meas.lidar_beg_time - lidar_end_time << std::endl;
             lidar_mean_scantime += (meas.lidar->points.back().curvature / double(1000) - lidar_mean_scantime) / scan_num;
         }
+        // Sanity check: if scan duration is unreasonably small (e.g. no per-point timestamps),
+        // fall back to the configured scan rate
+        if (lidar_end_time - meas.lidar_beg_time < 0.01)
+        {
+            lidar_end_time = meas.lidar_beg_time + 1.0 / p_pre->SCAN_RATE;
+        }
+
+        static int dbg_cnt = 0;
+        if (dbg_cnt++ < 5 || dbg_cnt % 50 == 0)
+            ROS_INFO("[sync] lidar_beg=%.6f end=%.6f dur=%.3fms lmu=%.6f lb=%zu ib=%zu pts=%zu",
+                meas.lidar_beg_time, lidar_end_time,
+                (lidar_end_time - meas.lidar_beg_time)*1000.0,
+                last_timestamp_imu, lidar_buffer.size(), imu_buffer.size(),
+                meas.lidar->points.size());
+
         if(lidar_type == MARSIM)
             lidar_end_time = meas.lidar_beg_time;
 
@@ -574,13 +578,21 @@ void publish_frame_world(const ros::Publisher & pubLaserCloudFull)
     if (pcd_save_en)
     {
         int size = feats_undistort->points.size();
-        PointCloudXYZI::Ptr laserCloudWorld( \
-                        new PointCloudXYZI(size, 1));
+        PointCloudXYZI::Ptr laserCloudWorld(new PointCloudXYZI());
+        laserCloudWorld->reserve(size);
 
         for (int i = 0; i < size; i++)
         {
-            RGBpointBodyToWorld(&feats_undistort->points[i], \
-                                &laserCloudWorld->points[i]);
+            // 过滤雷达后方扇形（±半角），body 系 X=前 Y=左
+            if (rear_filter_en && feats_undistort->points[i].x < 0)
+            {
+                float half_angle = rear_filter_angle * 0.5f * M_PI / 180.0f;
+                if (fabs(feats_undistort->points[i].y) < fabs(feats_undistort->points[i].x) * tan(half_angle))
+                    continue;
+            }
+            PointType pt;
+            RGBpointBodyToWorld(&feats_undistort->points[i], &pt);
+            laserCloudWorld->push_back(pt);
         }
         *pcl_wait_save += *laserCloudWorld;
 
@@ -883,6 +895,10 @@ int main(int argc, char** argv)
     nh.param<bool>("pcd_save/pcd_save_en", pcd_save_en, false);
     nh.param<int>("pcd_save/interval", pcd_save_interval, -1);
     nh.param<string>("pcd_save/save_dir", map_save_dir, string("/home/robot/go2_nav/lite_cog/system/map"));
+    nh.param<bool>("pcd_save/rear_filter_en", rear_filter_en, false);
+    nh.param<float>("pcd_save/rear_filter_angle", rear_filter_angle, 60.0);
+    if (rear_filter_en)
+        ROS_INFO("PCD rear filter enabled: rear %.0f° sector skipped", rear_filter_angle);
     nh.param<vector<double>>("mapping/extrinsic_T", extrinT, vector<double>());
     nh.param<vector<double>>("mapping/extrinsic_R", extrinR, vector<double>());
 
@@ -1130,17 +1146,14 @@ int main(int argc, char** argv)
             pcd_index++;
             file_name = string("scans_") + to_string(pcd_index) + string(".pcd");
             all_points_dir = map_save_dir + string("/") + file_name;
-
         } while (access(all_points_dir.c_str(), F_OK) == 0);
-
         pcl::PCDWriter pcd_writer;
         cout << "current scan saved to /PCD/" << file_name << endl;
         pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
 
-        // Auto-convert saved PCD to 2D grid map
-        string cmd = string("bash /home/robot/go2_nav/lite_cog/system/convert_pcd.sh ") + all_points_dir;
-        cout << "[pcd2grid] running: " << cmd << endl;
-        system(cmd.c_str());
+        // PGM/YAML conversion is now handled by map_stop_hook.sh
+        // (called by web gateway on /api/mapping/stop).
+        // convert_pcd.sh is kept as a manual fallback for direct SIGINT.
     }
 
     fout_out.close();

@@ -6,12 +6,11 @@ common:
 
 preprocess:
     lidar_type: 1                # 1 for Livox AVIA serials (including MID360)
-    scan_line: 4
+    scan_line: 1
     timestamp_unit: 2
     scan_rate: 10
-    blind: 4                     # 4m blind zone for MID360 (matches faster-lio)
-    point_filter_num: 3          # keep 1/3 points (matches faster-lio)
-    crop_body_en: false           # Enable robot body self-filtering
+    blind: 0.3
+    crop_body_en: true           # Enable robot body self-filtering
     crop_body_min: [-0.8, -0.35, -0.6]  # [x, y, z] min corner in LiDAR frame (m)
     crop_body_max: [ 0.8,  0.35,  0.05]  # [x, y, z] max corner in LiDAR frame (m)
 
@@ -22,7 +21,7 @@ mapping:
     acc_cov: 0.05
     b_gyr_cov: 0.0001
     b_acc_cov: 0.0001
-    extrinsic_est_en: true
+    extrinsic_est_en: false
     extrinsic_T: [0.0, 0.0, 0.0]
     extrinsic_R: [1, 0, 0,
                   0, 1, 0,
@@ -37,4 +36,6 @@ publish:
 pcd_save:
     pcd_save_en: true
     interval: -1
-    save_dir: /home/unitree/go2_nav/lite_cog/system/map
+    save_dir: "/home/unitree/go2_nav/lite_cog/system/map"
+    rear_filter_en: true            # 过滤雷达后方固定物
+    rear_filter_angle: 60.0         # 后方过滤扇形角度(度)，对称于正后方
