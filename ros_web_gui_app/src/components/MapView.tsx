@@ -11,7 +11,7 @@ import { ImageDisplay } from './ImageDisplay';
 import { TopoPointInfoPanel } from './TopoPointInfoPanel';
 import { NavParamsPanel } from './NavParamsPanel';
 import { DEFAULT_LAYER_CONFIGS } from '../constants/layerConfigs';
-import { loadLayerConfigs, saveLayerConfigs, saveImagePositions, type ImagePositionsMap } from '../utils/layerConfigStorage';
+import { loadLayerConfigs, saveImagePositions, type ImagePositionsMap } from '../utils/layerConfigStorage';
 import { useLayerConfigSync } from '../hooks/useLayerConfigSync';
 import { useInitialization } from '../hooks/useInitialization';
 import { useImageLayers } from '../hooks/useImageLayers';
@@ -61,7 +61,7 @@ interface MapViewProps {
 
 export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLogout }: MapViewProps) {
   const [gatewayPanel, setGatewayPanel] = useState<GatewayPanel | null>(null);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [_mobileMenuOpen, _setMobileMenuOpen] = useState(false);
   const [showGatewayLogin, setShowGatewayLogin] = useState(false);
   const [gwUsername, setGwUsername] = useState('admin');
   const [gwPassword, setGwPassword] = useState('admin123');
@@ -72,6 +72,7 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
+  const gwPanelRef = useRef<HTMLDivElement>(null);
   const layerManagerRef = useRef<LayerManager | null>(null);
   const [layerConfigs, setLayerConfigs] = useState<LayerConfigMap>(() => {
     const saved = loadLayerConfigs();
@@ -99,12 +100,11 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
         merged.voxel_grid.enabled = true;
         merged.voxel_grid.targetFrame = 'map';
       }
-      // 强制 robot 启用；保留已保存的 frame 配置（默认 map→base_link）
+      // 强制 robot 启用 + 匹配实际 TF 树 camera_init→body
       if (merged.robot) {
         merged.robot.enabled = true;
-        // 确保 mapFrame/baseFrame 有效，避免加载的配置使用了不存在的坐标系
-        if (!merged.robot.mapFrame) merged.robot.mapFrame = 'map';
-        if (!merged.robot.baseFrame) merged.robot.baseFrame = 'base_link';
+        merged.robot.mapFrame = 'camera_init';
+        merged.robot.baseFrame = 'body';
       }
       return merged;
     }
@@ -121,13 +121,13 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
     const saved = loadLayerConfigs();
     return (saved?.map_cloud?.maxTotalPoints as number) ?? (DEFAULT_LAYER_CONFIGS.map_cloud?.maxTotalPoints as number) ?? 5000000;
   });
-  const [showDensitySlider, setShowDensitySlider] = useState(false);
+  const [_showDensitySlider, _setShowDensitySlider] = useState(false);
   const [scanDistance, setScanDistance] = useState<number>(5);
-  const [showScanDistSlider, setShowScanDistSlider] = useState(false);
-  const [navTolerance, setNavTolerance] = useState<number>(0.2);
-  const [showNavTolSlider, setShowNavTolSlider] = useState(false);
-  const [obstacleDist, setObstacleDist] = useState<number>(0.15);
-  const [showObstacleDistSlider, setShowObstacleDistSlider] = useState(false);
+  const [_showScanDistSlider, _setShowScanDistSlider] = useState(false);
+  const [_navTolerance, _setNavTolerance] = useState<number>(0.2);
+  const [_showNavTolSlider, _setShowNavTolSlider] = useState(false);
+  const [_obstacleDist, _setObstacleDist] = useState<number>(0.15);
+  const [_showObstacleDistSlider, _setShowObstacleDistSlider] = useState(false);
   const [mouseWorldPos, setMouseWorldPos] = useState<{ x: number; y: number } | null>(null);
   const [robotPos, setRobotPos] = useState<{ x: number; y: number; theta: number } | null>(null);
   const focusRobotRef = useRef(false);
@@ -158,7 +158,6 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
   const poseEstimateRef = useRef<{ x: number; y: number; yaw: number } | null>(null);
   const isEstimatingRef = useRef(false);
   const estimateStartRef = useRef<THREE.Vector3 | null>(null);
-  const estimateArrowRef = useRef<THREE.Line | null>(null);
   const estimateLineObjRef = useRef<THREE.Line | null>(null);
   const estimateModeRef = useRef<'relocalize' | 'navgoal' | null>(null);
   const initialposeTopicRef = useRef<string>('/initialpose');
@@ -618,7 +617,7 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
 
   // 通过网关获取地图/机器人/激光数据，渲染到 3D 场景（无需 rosbridge 直连）
   const gatewayCtx = useGatewayContext();
-  useGatewaySceneSync({ scene: sceneRef.current, snapshot: gatewayCtx.snapshot, navGoal: navGoal || gatewayCtx.snapshot?.runtime?.navGoal, skipVoxelGrid: connection?.isConnected() ?? false, skipMap: !!gatewayToken });
+  useGatewaySceneSync({ scene: sceneRef.current, snapshot: gatewayCtx.snapshot, navGoal, skipVoxelGrid: connection?.isConnected() ?? false, skipMap: !!gatewayToken });
 
   // 网关模式下，将遥测地图数据注入 MapManager 供 OccupancyGridLayer 渲染
   const lastMapInjectedRef = useRef<string>('');
@@ -651,6 +650,19 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
       setNavGoal(null);
     }
   }, [gatewayCtx.snapshot?.runtime?.navMode]);
+
+  // 同步外部来源的 nav_goal（例如通过 MQ 发送的导航目标点）
+  useEffect(() => {
+    const externalNavGoal = gatewayCtx.snapshot?.runtime?.navGoal;
+    if (!externalNavGoal) return;
+    if (gatewayCtx.snapshot?.runtime?.navMode === 'multi') return;
+    setNavGoal((prev) => {
+      if (prev && prev.x === externalNavGoal.x && prev.y === externalNavGoal.y && prev.yaw === externalNavGoal.yaw) {
+        return prev;
+      }
+      return { x: externalNavGoal.x, y: externalNavGoal.y, yaw: externalNavGoal.yaw };
+    });
+  }, [gatewayCtx.snapshot?.runtime?.navGoal, gatewayCtx.snapshot?.runtime?.navMode]);
 
   // 系统内存轮询 (5s)
   useEffect(() => {
@@ -724,6 +736,30 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
     focusRobotRef.current = focusRobot;
   }, [focusRobot]);
 
+  // 为 Gateway 面板添加原生触摸滚动支持（绕过浏览器 passive 事件限制）
+  useEffect(() => {
+    const panel = gwPanelRef.current;
+    if (!panel) return;
+    let startY = 0;
+    let startScroll = 0;
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      startY = e.touches[0].clientY;
+      startScroll = panel.scrollTop;
+    };
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      const dy = startY - e.touches[0].clientY;
+      panel.scrollTop = startScroll + dy;
+    };
+    panel.addEventListener('touchstart', handleTouchStart, { passive: true });
+    panel.addEventListener('touchmove', handleTouchMove, { passive: true });
+    return () => {
+      panel.removeEventListener('touchstart', handleTouchStart);
+      panel.removeEventListener('touchmove', handleTouchMove);
+    };
+  }, [gatewayToken, gatewayPanel]);
+
   const handleViewModeToggle = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.preventDefault();
     e.stopPropagation();
@@ -760,32 +796,6 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
       if (next.voxel_grid) next.voxel_grid = { ...next.voxel_grid, maxDistance: maxDist };
       return next;
     });
-  };
-
-  const handleNavToleranceChange = async (value: number) => {
-    setNavTolerance(value);
-    if (!gatewayTokenRef.current) return;
-    try {
-      const { apiBase } = await import('../api/gatewayApi');
-      await fetch(`${apiBase}/api/nav/tolerance`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${gatewayTokenRef.current}` },
-        body: JSON.stringify({ xy_tolerance: value }),
-      });
-    } catch {}
-  };
-
-  const handleObstacleDistChange = async (value: number) => {
-    setObstacleDist(value);
-    if (!gatewayTokenRef.current) return;
-    try {
-      const { apiBase } = await import('../api/gatewayApi');
-      await fetch(`${apiBase}/api/nav/obstacle-dist`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${gatewayTokenRef.current}` },
-        body: JSON.stringify({ min_dist: value }),
-      });
-    } catch {}
   };
 
   const exitEstimateMode = () => {
@@ -972,7 +982,7 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
 
       {/* Gateway panel overlay */}
       {gatewayToken && gatewayPanel && (
-        <div className="GatewayPanelOverlay">
+        <div className="GatewayPanelOverlay" ref={gwPanelRef}>
           <div className="GatewayPanelHeader">
             <h3>{gatewayButtons.find(b => b.id === gatewayPanel)?.label || ''}</h3>
             <button
@@ -1083,7 +1093,7 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
             (topoLayer as any).setSelectedRoute(null);
           }
         }}
-        connection={connection}
+        connection={connection!}
       />
       <canvas ref={canvasRef} className="MapCanvas" style={{ touchAction: 'none' }}
         onMouseMove={handleCanvasMouseMove}
@@ -1136,12 +1146,7 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
             <span className="CoordinateValue">
               {robotPos
                 ? `X: ${robotPos.x.toFixed(3)}, Y: ${robotPos.y.toFixed(3)}, θ: ${robotPos.theta.toFixed(3)}`
-                : (() => {
-                    const gwPose = gatewayCtx.snapshot?.runtime?.tfPose;
-                    return gwPose
-                      ? `X: ${gwPose.x.toFixed(3)}, Y: ${gwPose.y.toFixed(3)}, θ: ${gwPose.yaw.toFixed(3)} (网关)`
-                      : '-';
-                  })()}
+                : '-'}
             </span>
           </div>
         )}

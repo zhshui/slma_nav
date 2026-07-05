@@ -134,7 +134,6 @@ export const DEFAULT_LAYER_CONFIGS: LayerConfigMap = {
     color: 0xff6600,
     pointSize: 0.05,
     targetFrame: 'map',
-    maxPoints: 2000,
   },
   map_cloud: {
     id: 'pointcloud2',

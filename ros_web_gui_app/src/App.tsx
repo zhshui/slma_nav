@@ -48,15 +48,6 @@ function App() {
     return false;
   }, []);
 
-  const handleDisconnect = useCallback(() => {
-    if (connection) {
-      connection.disconnect();
-      TF2JS.getInstance().disconnect();
-      setConnection(null);
-      setConnected(false);
-    }
-  }, [connection]);
-
   useEffect(() => {
     const wsUrl = getWsUrlFromUrl();
     console.log('[App] 初始连接检查:', { pathname: window.location.pathname, wsUrl, connected });

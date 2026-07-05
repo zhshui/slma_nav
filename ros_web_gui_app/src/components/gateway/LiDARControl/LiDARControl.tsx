@@ -8,7 +8,7 @@ const btnStyle: React.CSSProperties = {
 
 export function LiDARControl() {
   const { snapshot, runAction } = useGatewayContext()
-  const [errorText, setErrorText] = useState('')
+  const [errorText, _setErrorText] = useState('')
   const runtime = snapshot?.runtime
 
   return (

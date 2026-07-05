@@ -1,4 +1,3 @@
-import compression from 'compression'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import express from 'express'
@@ -12,7 +11,7 @@ import { deflateSync } from 'node:zlib'
 import { spawn, exec, execFile, execSync, type ChildProcess } from 'node:child_process'
 import path from 'node:path'
 import { WebSocketServer } from 'ws'
-import mqtt, { type MqttClient } from 'mqtt'
+import { connect, type Channel } from 'amqplib'
 import db from './db.js'
 import { getUserById, requireAuth, requireRole, signToken, type AuthedRequest } from './auth.js'
 import { newId, runtimeState, updateMockPoseAndLidar, LARGE_MAP_CELL_THRESHOLD } from './state.js'
@@ -21,55 +20,47 @@ import { createRosAdapterFromEnv } from './rosAdapter.js'
 dotenv.config()
 const rosAdapter = createRosAdapterFromEnv()
 
-// ====== MQTT 发布/订阅 ======
+// ====== MQ 发布 ======
 const MQ_HOST = process.env.MQ_HOST || '127.0.0.1'
-const MQ_PORT = Number(process.env.MQ_PORT || '1883')
+const MQ_PORT = Number(process.env.MQ_PORT || '5672')
 const MQ_USER = process.env.MQ_USER || 'nav'
 const MQ_PASS = process.env.MQ_PASS || 'nav123'
-const MQ_CLIENT_ID = process.env.MQ_CLIENT_ID || 'robot-001'
-let mqClient: MqttClient | null = null
+const MQ_VHOST = process.env.MQ_VHOST || '/'
+const MQ_EXCHANGE = process.env.MQ_EXCHANGE || 'nav.exchange'
+const MQ_CLIENT_ID = process.env.MQ_CLIENT_ID || 'B42D1000P3499GGW' //默认: robot-001 
+let mqChannel: Channel | null = null
+let mqConn: any = null
 let lastMqPoseAt = 0   // MQ 位姿最后更新时间戳
 
-function mqConnect(): MqttClient | null {
-  if (mqClient?.connected) return mqClient
+async function mqConnect(): Promise<Channel | null> {
   try {
-    const clientId = `gateway-${MQ_CLIENT_ID}-${Date.now()}`
-    const url = `mqtt://${MQ_HOST}:${MQ_PORT}`
-    mqClient = mqtt.connect(url, {
-      username: MQ_USER,
-      password: MQ_PASS,
-      clientId,
-      keepalive: 30,
-      clean: true,
-      reconnectPeriod: 5000,
+    if (mqChannel && mqConn) return mqChannel
+    mqConn = await connect({
+      hostname: MQ_HOST, port: MQ_PORT,
+      username: MQ_USER, password: MQ_PASS,
+      vhost: MQ_VHOST, heartbeat: 30,
     })
+    mqChannel = await mqConn.createChannel()
+    await mqChannel!.assertExchange(MQ_EXCHANGE, 'topic', { durable: true })
 
-    mqClient.on('connect', () => {
-      console.log('[gateway] MQTT connected')
-      // 订阅 mq_adapter 发布的遥测主题
-      mqClient!.subscribe([
-        `nav/${MQ_CLIENT_ID}/status`,
-        `nav/${MQ_CLIENT_ID}/pose`,
-        `nav/${MQ_CLIENT_ID}/route`,
-        `nav/${MQ_CLIENT_ID}/nav_points`,
-        `nav/${MQ_CLIENT_ID}/voxel_grid`,
-      ], { qos: 1 }, (err) => {
-        if (err) console.warn('[gateway] MQTT subscribe error:', err)
-        else console.log('[gateway] MQTT subscribed status/pose/route/nav_points/voxel_grid')
-      })
-    })
-
-    mqClient.on('message', (_topic, payload) => {
+    // ---- 订阅 MQ 状态 & 位姿 & 路线（mq_adapter → Web） ----
+    const q = await mqChannel!.assertQueue('', { exclusive: true, autoDelete: true })
+    await mqChannel!.bindQueue(q.queue, MQ_EXCHANGE, `nav.${MQ_CLIENT_ID}.status`)
+    await mqChannel!.bindQueue(q.queue, MQ_EXCHANGE, `nav.${MQ_CLIENT_ID}.pose`)
+    await mqChannel!.bindQueue(q.queue, MQ_EXCHANGE, `nav.${MQ_CLIENT_ID}.route`)
+    await mqChannel!.bindQueue(q.queue, MQ_EXCHANGE, `nav.${MQ_CLIENT_ID}.nav_points`)
+    await mqChannel!.consume(q.queue, (msg) => {
+      if (!msg) return
       try {
-        const data = JSON.parse(payload.toString())
+        const data = JSON.parse(msg.content.toString())
         const hdr = data.header || {}
         const body = data.body || {}
         if (hdr.msg_type === 'nav_status') {
           const ns = body.nav_state as string
-          console.log(`[gateway] MQTT ← status: ${ns}`)
-          const map: Record<string, string> = { idle: 'idle', running: 'running', moving: 'running', arrived: 'running', stuck: 'running', paused: 'paused', completed: 'stopped', failed: 'stopped', cancelled: 'stopped', loc_lost: 'running' }
+          console.log(`[gateway] MQ ← status: ${ns}`)
+          const map: Record<string, string> = { idle: 'idle', running: 'running', paused: 'paused', completed: 'stopped', failed: 'stopped', cancelled: 'stopped', '就绪': 'running', '运动中': 'running', '阻塞': 'running', '到达': 'stopped' }
           const mapped = map[ns] || ns
-          // gateway 是状态源，MQTT status 仅作外部遥测回显，不覆盖本地主动设置的状态
+          // gateway 是状态源，MQ status 仅作外部遥测回显，不覆盖本地主动设置的状态
           const localActive = navProcess !== null || taskProcess !== null
           if (!localActive && runtimeState.navStatus !== mapped) {
             runtimeState.navStatus = mapped as 'idle' | 'running' | 'paused' | 'stopped'
@@ -103,7 +94,7 @@ function mqConnect(): MqttClient | null {
             }
             for (let i = 0; i < points.length; i++) {
               const p = points[i]
-              writeNavPointFile(p.id || `wp-${i}`, p.x, p.y, p.yaw ?? 0, i)
+              writeNavPointFile(p.id || `wp-${i}`, p.id || `wp-${i}`, p.x, p.y, p.yaw ?? 0, i)
             }
             broadcastNavPointsFromFiles()
           }
@@ -112,34 +103,25 @@ function mqConnect(): MqttClient | null {
           if (pts.length >= 2) {
             runtimeState.globalPlan = pts
           }
-        } else if (hdr.msg_type === 'voxel_grid') {
-          const pts = (body.points || []) as Array<{x: number; y: number; z: number}>
-          if (pts.length > 0) {
-            runtimeState.voxelGrid = pts
-            runtimeState.lastVoxelAt = new Date().toISOString()
-          }
         }
       } catch { /* 忽略解析错误 */ }
-    })
+    }, { noAck: true })
 
-    mqClient.on('close', () => {
-      console.log('[gateway] MQTT disconnected')
-    })
-    mqClient.on('error', (e) => {
-      console.warn('[gateway] MQTT error:', (e as Error).message)
-    })
-
-    return mqClient
+    // 重连处理
+    mqConn.on('close', () => { mqChannel = null; mqConn = null })
+    mqConn.on('error', () => { mqChannel = null; mqConn = null })
+    console.log('[gateway] MQ connected + subscribed status/pose')
+    return mqChannel
   } catch (e) {
-    console.warn('[gateway] MQTT connect failed:', e)
-    mqClient = null
+    console.warn('[gateway] MQ connect failed:', e)
+    mqChannel = null; mqConn = null
     return null
   }
 }
 
-function mqPublish(suffix: string, msgType: string, body: Record<string, unknown>): boolean {
-  const client = mqConnect()
-  if (!client) return false
+async function mqPublish(suffix: string, msgType: string, body: Record<string, unknown>): Promise<boolean> {
+  const ch = await mqConnect()
+  if (!ch) return false
   try {
     const mid = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
     const msg = {
@@ -148,14 +130,12 @@ function mqPublish(suffix: string, msgType: string, body: Record<string, unknown
       },
       body: { ...body, ref_msg_id: mid },
     }
-    const topic = `nav/${MQ_CLIENT_ID}/${suffix}`
-    client.publish(topic, JSON.stringify(msg), { qos: 1 }, (err) => {
-      if (err) console.error('[gateway] MQTT publish error:', err)
-    })
-    console.log(`[gateway] MQTT → ${topic}`)
+    const routingKey = `nav.${MQ_CLIENT_ID}.${suffix}`
+    ch.publish(MQ_EXCHANGE, routingKey, Buffer.from(JSON.stringify(msg)))
+    console.log(`[gateway] MQ → ${routingKey}`)
     return true
   } catch (e) {
-    console.error('[gateway] MQTT publish error:', e)
+    console.error('[gateway] MQ publish error:', e)
     return false
   }
 }
@@ -353,14 +333,13 @@ function killProcess(proc: ChildProcess | null, label: string): boolean {
   } catch { return false }
 }
 
-app.use(compression())
 app.use(cors())
 app.use(express.json({ limit: '256mb' }))
 
 // Serve production frontend build (no vite dev server needed)
 const distDir = path.resolve(process.cwd(), '..', 'dist')
 if (existsSync(distDir)) {
-  app.use(express.static(distDir, { maxAge: '1h' }))
+  app.use(express.static(distDir, { maxAge: 0 }))
   console.log('[gateway] Serving frontend from', distDir)
 }
 
@@ -372,24 +351,29 @@ app.use('/static/maps', express.static(staticMapsDir, { maxAge: 0, setHeaders: (
 }}))
 
 function readNavPointsFromFiles(): Array<{id: string; name: string; x: number; y: number; yaw: number; map_id: string | null; created_at: string}> {
-  const points: Array<{id: string; name: string; x: number; y: number; yaw: number; map_id: string | null; created_at: string}> = []
+  const items: Array<{order: number; point: {id: string; name: string; x: number; y: number; yaw: number; map_id: string | null; created_at: string}}> = []
   try {
-    const files = readdirSync(TASK_DATA_DIR).filter(f => f.endsWith('.json')).sort()
+    const files = readdirSync(TASK_DATA_DIR).filter(f => f.endsWith('.json'))
     for (const f of files) {
       try {
         const raw = JSON.parse(readFileSync(path.join(TASK_DATA_DIR, f), 'utf-8'))
         const rp = raw.robot_pose || {}
         const id = f.replace('.json', '')
-        points.push({
-          id, name: id,
-          x: rp.pos_x ?? 0, y: rp.pos_y ?? 0,
-          yaw: Math.atan2(rp.ori_z || 0, rp.ori_w || 1) * 2,
-          map_id: null, created_at: new Date().toISOString(),
+        items.push({
+          order: typeof raw.order === 'number' ? raw.order : 0,
+          point: {
+            id,
+            name: typeof raw.name === 'string' ? raw.name : id,
+            x: rp.pos_x ?? 0, y: rp.pos_y ?? 0,
+            yaw: Math.atan2(rp.ori_z || 0, rp.ori_w || 1) * 2,
+            map_id: null, created_at: new Date().toISOString(),
+          },
         })
       } catch { /* skip bad files */ }
     }
+    items.sort((a, b) => a.order - b.order)
   } catch { /* dir not exist */ }
-  return points
+  return items.map(it => it.point)
 }
 
 function snapshot() {
@@ -552,11 +536,11 @@ app.post('/api/mapping/stop', requireAuth, async (req, res) => {
         console.log('[gateway] sent SIGTERM to SLAM for graceful PCD save')
       } catch { }
     }
-    // Also SIGTERM any remaining fastlio_mapping / run_mapping_online processes
-    exec('pkill -SIGTERM -f "[f]astlio_mapping" 2>/dev/null; pkill -SIGTERM -f "[r]un_mapping_online" 2>/dev/null', () => {})
+    // Also SIGTERM any remaining fastlio_mapping processes
+    exec('pkill -SIGTERM -f "[f]astlio_mapping" 2>/dev/null', () => {})
   } else {
     killProcess(slamProcess, 'SLAM')
-    exec('pkill -f "[m]apping_mid360" 2>/dev/null; pkill -f "[m]apping_c16" 2>/dev/null; pkill -f "[f]astlio_mapping" 2>/dev/null; pkill -f "[r]un_mapping_online" 2>/dev/null; pkill -f "[g]ridmap" 2>/dev/null; pkill -f "[s]ave_map" 2>/dev/null; pkill -f "[l]ivox_ros_driver2" 2>/dev/null; pkill -f "[m]sg_MID360" 2>/dev/null; pkill -f "[r]viz" 2>/dev/null', () => {})
+    exec('pkill -f "[m]apping_mid360" 2>/dev/null; pkill -f "[f]astlio_mapping" 2>/dev/null; pkill -f "[g]ridmap" 2>/dev/null; pkill -f "[s]ave_map" 2>/dev/null; pkill -f "[l]ivox_ros_driver2" 2>/dev/null; pkill -f "[m]sg_MID360" 2>/dev/null; pkill -f "[r]viz" 2>/dev/null', () => {})
   }
   slamProcess = null
   runtimeState.mappingStatus = 'stopped'
@@ -622,16 +606,27 @@ app.post('/api/maps/save', requireAuth, async (req, res) => {
     return { pgmPath, yamlPath }
   }
 
-  /** 尝试将 PCD 复制到地图文件夹。如果指定了 pcdSource 且文件存在则直接使用 */
+  /** 尝试将 PCD 复制到地图文件夹。如果指定了 pcdSource 且文件存在则直接使用。
+   *  根目录下的 PCD（如 scans_1.pcd）用移动代替复制，避免与文件夹内的 PCD 重复。 */
   function copyPcdToMapFolder(mapDir: string, pcdSource?: string | null): string {
     const mapFolder = path.join(mapDir, name)
     mkdirSync(mapFolder, { recursive: true })
     const pcdDest = path.join(mapFolder, `${name}.pcd`)
 
+    // 根目录下的 PCD 用移动（rename），避免残留重复文件；其他路径用复制
+    function moveOrCopy(src: string, dst: string, label: string) {
+      if (path.dirname(src) === mapDir) {
+        renameSync(src, dst)
+        console.log(`[gateway] PCD moved (root cleanup): ${src} -> ${dst} (${label})`)
+      } else {
+        copyFileSync(src, dst)
+        console.log(`[gateway] PCD copied: ${src} -> ${dst} (${label})`)
+      }
+    }
+
     // 0) 用户手动指定的 PCD 优先
     if (pcdSource && existsSync(pcdSource)) {
-      copyFileSync(pcdSource, pcdDest)
-      console.log(`[gateway] PCD copied from user selection: ${pcdSource} -> ${pcdDest}`)
+      moveOrCopy(pcdSource, pcdDest, 'user selection')
       return pcdDest
     }
 
@@ -650,16 +645,14 @@ app.post('/api/maps/save', requireAuth, async (req, res) => {
     // 优先匹配：文件名与地图名相同的 PCD
     const nameMatch = allPcds.find(p => path.basename(p.path, '.pcd') === name)
     if (nameMatch) {
-      copyFileSync(nameMatch.path, pcdDest)
-      console.log(`[gateway] PCD copied by name match: ${nameMatch.path} -> ${pcdDest}`)
+      moveOrCopy(nameMatch.path, pcdDest, 'name match')
       return pcdDest
     }
 
     // 取最新修改的 PCD
     allPcds.sort((a, b) => b.mtimeMs - a.mtimeMs)
     const latest = allPcds[0]
-    copyFileSync(latest.path, pcdDest)
-    console.log(`[gateway] PCD copied (latest): ${latest.path} -> ${pcdDest}`)
+    moveOrCopy(latest.path, pcdDest, 'latest')
     return pcdDest
   }
 
@@ -759,13 +752,22 @@ free_thresh: 0.196
 `
   writeFileSync(yamlPath, yamlContent)
   // PCD 复制逻辑：用户指定 > 激活地图继承 > 自动搜索
+  // 根目录下的 PCD 用移动代替复制，避免残留重复文件
+  const moveOrCopyToFolder = (src: string, dst: string) => {
+    if (path.dirname(src) === mapDir) {
+      renameSync(src, dst)
+      console.log(`[gateway] Import PCD moved (root cleanup): ${src} -> ${dst}`)
+    } else {
+      copyFileSync(src, dst)
+      console.log(`[gateway] Import PCD copied: ${src} -> ${dst}`)
+    }
+  }
   const userPcd = req.body?.pcd_path ? String(req.body.pcd_path).trim() : ''
   let pcdPath = ''
   if (userPcd && existsSync(userPcd)) {
     const pcdDest = path.join(mapFolder, `${mapName}.pcd`)
-    copyFileSync(userPcd, pcdDest)
+    moveOrCopyToFolder(userPcd, pcdDest)
     pcdPath = pcdDest
-    console.log(`[gateway] Import PCD from user selection: ${userPcd} -> ${pcdDest}`)
   } else {
     const activeMap = db.prepare('SELECT pcd_path FROM maps WHERE active = 1').get() as { pcd_path: string } | undefined
     if (activeMap?.pcd_path && existsSync(activeMap.pcd_path)) {
@@ -778,7 +780,7 @@ free_thresh: 0.196
       if (allPcds.length > 0) {
         allPcds.sort((a, b) => b.mtimeMs - a.mtimeMs)
         const pcdDest = path.join(mapFolder, `${mapName}.pcd`)
-        copyFileSync(allPcds[0].path, pcdDest)
+        moveOrCopyToFolder(allPcds[0].path, pcdDest)
         pcdPath = pcdDest
       }
     }
@@ -929,7 +931,7 @@ app.post('/api/maps/:id/switch', requireAuth, async (req, res) => {
   // MQ 通知: 地图切换成功（只发切到的那张）
   mqPublish('map_list', 'map_list', {
     switched_to: { id: row.id, name: row.name },
-  })
+  }).catch(() => {})
 
   res.json({ ok: true })
 
@@ -947,10 +949,11 @@ function broadcastNavPointsFromFiles() {
   broadcast('nav_points', readNavPointsFromFiles())
 }
 
-function writeNavPointFile(id: string, px: number, py: number, yaw: number, order: number) {
+function writeNavPointFile(id: string, name: string, px: number, py: number, yaw: number, order: number) {
   const halfYawSin = Math.sin(yaw / 2)
   const halfYawCos = Math.cos(yaw / 2)
   const rec = {
+    name,
     order,
     robot_pose: { pos_x: px, pos_y: py, pos_z: 0, ori_x: 0, ori_y: 0, ori_z: halfYawSin, ori_w: halfYawCos },
     option: { even_low_speed: false, even_medium_speed: false, uneven_high_step: false },
@@ -972,7 +975,7 @@ app.post('/api/nav-points', requireAuth, (req, res) => {
   }
   const id = name || `P-${new Date().toISOString().slice(11, 19)}`
   const files = readdirSync(TASK_DATA_DIR).filter(f => f.endsWith('.json'))
-  writeNavPointFile(id, x, y, yaw, files.length)
+  writeNavPointFile(id, name || id, x, y, yaw, files.length)
   broadcastNavPointsFromFiles()
   res.status(201).json({ id })
 })
@@ -1014,6 +1017,7 @@ app.put('/api/nav-points/:id', requireAuth, (req, res) => {
       raw.robot_pose.ori_z = Math.sin(yaw / 2)
       raw.robot_pose.ori_w = Math.cos(yaw / 2)
     }
+    if (name) raw.name = name
     writeFileSync(fp, JSON.stringify(raw, null, 4))
     // rename if name changed
     if (name && name !== req.params.id) {
@@ -1164,6 +1168,7 @@ app.post('/api/topology/save', requireAuth, (req, res) => {
       const p = points[i]
       const half = (p.theta || 0) / 2
       const record = {
+        name: p.name || `${i}`,
         order: i,
         robot_pose: {
           pos_x: p.x, pos_y: p.y, pos_z: 0,
@@ -1199,10 +1204,7 @@ app.post('/api/topology/save', requireAuth, (req, res) => {
 // 启动 Task.py 进程（多点导航顺序执行）
 function startTaskProcess() {
   const gen = navGeneration  // 记录当前 generation
-  const logFile = '/tmp/task.log'
-  const taskCmd = `source /opt/ros/noetic/setup.bash && source /home/unitree/go2_nav/lite_cog/pipeline/devel/setup.bash && python3 ${TASK_SCRIPT} 2>&1 | tee ${logFile}`
-  console.log(`[gateway] TASK cmd: ${taskCmd}`)
-  taskProcess = spawn('bash', ['-c', taskCmd], {
+  taskProcess = spawn('bash', ['-c', `source /opt/ros/noetic/setup.bash && source /home/unitree/go2_nav/lite_cog/pipeline/devel/setup.bash && python3 ${TASK_SCRIPT} 2>&1 | tee /tmp/task.log`], {
     detached: true,
     stdio: 'ignore',
   })
@@ -1330,12 +1332,19 @@ app.post('/api/nav/reorder', requireAuth, (req, res) => {
   try {
     // 读取现有 JSON 文件，建立 名称→内容 映射（在删除前全部读取）
     const existingFiles = readdirSync(TASK_DATA_DIR).filter(f => f.endsWith('.json'))
+    // 同时建立 filename→content 和 display_name→content 映射
     const pointMap = new Map<string, string>() // name -> JSON content
     for (const f of existingFiles) {
       const fp = path.join(TASK_DATA_DIR, f)
       const content = readFileSync(fp, 'utf-8')
-      const name = f.replace('.json', '')
-      pointMap.set(name, content)
+      pointMap.set(f.replace('.json', ''), content)
+      // 如果 JSON 里有 name 字段，也以其为 key 建立映射
+      try {
+        const rec = JSON.parse(content)
+        if (typeof rec.name === 'string') {
+          pointMap.set(rec.name, content)
+        }
+      } catch { /* skip */ }
     }
 
     // 清除所有旧 JSON 文件
@@ -1350,6 +1359,8 @@ app.post('/api/nav/reorder', requireAuth, (req, res) => {
       if (content) {
         const record = JSON.parse(content)
         record.order = i
+        // 确保 name 字段存在（向前兼容）
+        if (!record.name) record.name = name
         writeFileSync(path.join(TASK_DATA_DIR, `${i}.json`), JSON.stringify(record, null, 4))
       }
     }
@@ -1745,7 +1756,7 @@ setInterval(() => {
 
   diff.ts = runtimeState.lastSnapshotAt
   broadcast('telemetry', diff)
-}, 500)  // 2Hz — 降低遥测频率减少卡顿
+}, 200)  // 5Hz — 外部设备更新更流畅
 
 // Bootstrap
 async function bootstrap() {
@@ -1758,7 +1769,7 @@ async function bootstrap() {
   }
   await rosAdapter.start()
   mqConnect()
-  server.listen({ port: PORT, reuseAddr: true }, () => {
+  server.listen(PORT, () => {
     console.log(`Gateway listening on :${PORT}`)
   })
 }

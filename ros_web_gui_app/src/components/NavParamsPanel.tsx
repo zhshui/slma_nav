@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 // ============================================================
 // 导航参数配置面板 — 所有可调参数集中管理
@@ -73,7 +73,21 @@ interface NavParamsPanelProps {
   onScanDistanceChange: (v: number) => void;
 }
 
-export function NavParamsPanel({ gatewayToken, onClose, pcDensity, scanDistance, onPcDensityChange, onScanDistanceChange }: NavParamsPanelProps) {
+export function NavParamsPanel({ gatewayToken, onClose, pcDensity: _pcDensity, scanDistance: _scanDistance, onPcDensityChange, onScanDistanceChange }: NavParamsPanelProps) {
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // 原生触摸滚动支持
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    let startY = 0, startScroll = 0;
+    const ts = (e: TouchEvent) => { if (e.touches.length === 1) { startY = e.touches[0].clientY; startScroll = panel.scrollTop; } };
+    const tm = (e: TouchEvent) => { if (e.touches.length === 1) { panel.scrollTop = startScroll + (startY - e.touches[0].clientY); } };
+    panel.addEventListener('touchstart', ts, { passive: true });
+    panel.addEventListener('touchmove', tm, { passive: true });
+    return () => { panel.removeEventListener('touchstart', ts); panel.removeEventListener('touchmove', tm); };
+  }, []);
+
   const [values, setValues] = useState<Record<string, number>>(() => {
     const saved = loadSaved();
     const defaults = getDefaults();
@@ -181,15 +195,18 @@ export function NavParamsPanel({ gatewayToken, onClose, pcDensity, scanDistance,
     input.click();
   };
 
-  const param = (key: string) => ALL_PARAMS.find(p => p.key === key)!;
-
   return (
-    <div style={{
-      position: 'absolute', top: 0, right: 0, width: '340px', maxHeight: '100vh',
+    <div ref={panelRef} style={{
+      position: 'absolute', top: 0, right: 0, bottom: 0, width: '340px',
       backgroundColor: 'rgba(20,20,30,0.95)', color: '#ccc', zIndex: 200,
-      overflowY: 'auto', padding: '16px', fontSize: '13px',
+      overflowY: 'auto', overflowX: 'hidden', padding: '16px', fontSize: '13px',
+      paddingBottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',
       borderLeft: '1px solid rgba(255,255,255,0.1)',
       fontFamily: 'system-ui, sans-serif',
+      touchAction: 'pan-y',
+      overscrollBehavior: 'contain',
+      scrollbarWidth: 'thin',
+      scrollbarColor: 'rgba(255,255,255,0.25) transparent',
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <span style={{ fontWeight: 'bold', fontSize: '15px', color: '#fff' }}>⚙️ 导航参数配置</span>

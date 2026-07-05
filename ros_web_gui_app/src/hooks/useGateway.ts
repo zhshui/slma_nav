@@ -105,7 +105,7 @@ export function useGateway(authToken: string | null, onAuthError?: () => void): 
             mapUpdatedAt: string | null
             globalPlan: Array<{ x: number; y: number }>
             localPlan: Array<{ x: number; y: number }>
-            voxelGrid: Array<{ x: number; y: number; z: number }>
+            voxelGrid: Array<{ x: number; y: number }>
             lastVoxelAt: string | null
             navStatus?: string
           }>

@@ -122,8 +122,8 @@ export function MapEditor({ connection, onClose, gatewayToken }: MapEditorProps)
   const placingPointStartRef = useRef<THREE.Vector3 | null>(null);
   const placingPointInitialRef = useRef<TopoPoint | null>(null);
   const placingPointArrowRef = useRef<THREE.Line | null>(null);
-  const [supportControllers, setSupportControllers] = useState<string[]>(['FollowPath']);
-  const [supportGoalCheckers, setSupportGoalCheckers] = useState<string[]>(['general_goal_checker']);
+  const [_supportControllers, setSupportControllers] = useState<string[]>(['FollowPath']);
+  const [_supportGoalCheckers, setSupportGoalCheckers] = useState<string[]>(['general_goal_checker']);
   const [mouseWorldPos, setMouseWorldPos] = useState<{ x: number; y: number } | null>(null);
   const [robotPos, setRobotPos] = useState<{ x: number; y: number; theta: number } | null>(null);
   const [editingPoint, setEditingPoint] = useState<TopoPoint | null>(null);
@@ -846,7 +846,6 @@ export function MapEditor({ connection, onClose, gatewayToken }: MapEditorProps)
 
       // Throttle to ~30fps using requestAnimationFrame
       if (drawRafIdRef.current !== null) return;
-      const evtButtons = event.buttons; // capture for RAF callback
       drawRafIdRef.current = requestAnimationFrame(() => {
         drawRafIdRef.current = null;
         if (worldPos) {
@@ -870,7 +869,7 @@ export function MapEditor({ connection, onClose, gatewayToken }: MapEditorProps)
           positions.push({ x: worldPos.x, y: worldPos.y });
         }
 
-        const changes = occupancyGridLayerRef.current.modifyCells(positions, value, brushSize, initialGridValuesRef.current);
+        const changes = occupancyGridLayerRef.current!.modifyCells(positions, value, brushSize, initialGridValuesRef.current);
 
         for (const change of changes) {
           if (!currentGridChangesRef.current.has(change.index)) {
@@ -1298,60 +1297,6 @@ export function MapEditor({ connection, onClose, gatewayToken }: MapEditorProps)
           topoLayerRef.current.setSelectedPoint(currentPoint);
         }
       }
-    }
-  };
-
-  const handleSave = () => {
-    const mapManager = mapManagerRef.current;
-
-    const defaultControllers = ['FollowPath'];
-    const defaultGoalCheckers = ['general_goal_checker'];
-
-    const allControllers = new Set<string>(defaultControllers);
-    const allGoalCheckers = new Set<string>(defaultGoalCheckers);
-
-    const existingMapProperty = mapManager.getMapProperty();
-    if (existingMapProperty) {
-      if (existingMapProperty.support_controllers) {
-        existingMapProperty.support_controllers.forEach(c => allControllers.add(c));
-      }
-      if (existingMapProperty.support_goal_checkers) {
-        existingMapProperty.support_goal_checkers.forEach(g => allGoalCheckers.add(g));
-      }
-    }
-
-    const routes = mapManager.getTopologyRoutes();
-    routes.forEach(route => {
-      if (route.route_info.controller) {
-        allControllers.add(route.route_info.controller);
-      }
-      if (route.route_info.goal_checker) {
-        allGoalCheckers.add(route.route_info.goal_checker);
-      }
-    });
-
-    const mapProperty = {
-      support_controllers: Array.from(allControllers).sort(),
-      support_goal_checkers: Array.from(allGoalCheckers).sort(),
-    };
-
-    mapManager.updateMapProperty(mapProperty);
-
-    try {
-      mapManager.saveAndPublishTopology(connection);
-      toast.success('拓扑地图已保存并发布');
-    } catch (error) {
-      console.error('Failed to save/publish topology map:', error);
-      mapManager.saveTopology();
-      toast.warning('保存成功，但发布失败');
-    }
-
-    try {
-      mapManagerRef.current.publishOccupancyGrid(connection);
-      toast.success('栅格地图已发布到 /map/update');
-    } catch (error) {
-      console.error('Failed to publish occupancy grid:', error);
-      toast.warning('栅格地图发布失败');
     }
   };
 

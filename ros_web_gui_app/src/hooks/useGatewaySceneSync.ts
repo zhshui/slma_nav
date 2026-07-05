@@ -388,10 +388,9 @@ export function useGatewaySceneSync({ scene, snapshot, navGoal, skipVoxelGrid, s
     lastVoxelGridRef.current = key;
     const positions = new Float32Array(voxel.length * 3);
     for (let i = 0; i < voxel.length; i++) {
-      const pt = voxel[i]!;
-      positions[i * 3] = pt.x;
-      positions[i * 3 + 1] = pt.y;
-      positions[i * 3 + 2] = pt.z;
+      positions[i * 3] = voxel[i]!.x;
+      positions[i * 3 + 1] = voxel[i]!.y;
+      positions[i * 3 + 2] = 0.006;
     }
     if (voxelGridPointsRef.current) {
       scene.remove(voxelGridPointsRef.current);
@@ -400,7 +399,7 @@ export function useGatewaySceneSync({ scene, snapshot, navGoal, skipVoxelGrid, s
     }
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const mat = new THREE.PointsMaterial({ color: 0xff6600, size: 0.10, sizeAttenuation: true, depthTest: true, depthWrite: false, transparent: true, opacity: 0.85 });
+    const mat = new THREE.PointsMaterial({ color: 0xff6600, size: 0.08, depthTest: false, depthWrite: false, transparent: true, opacity: 0.9 });
     const points = new THREE.Points(geom, mat);
     points.renderOrder = 10000;
     points.position.z = 0.3;

@@ -24,7 +24,7 @@ export function NavControl() {
   const [errorText, setErrorText] = useState('')
   const [statusText, setStatusText] = useState('')
   const [navOrder, setNavOrder] = useState<string[]>([])
-  const [editingNameId, setEditingNameId] = useState<number | null>(null)
+  const [editingNameId, setEditingNameId] = useState<string | null>(null)
   const [editNameValue, setEditNameValue] = useState('')
   const navPoints: NavPoint[] = (snapshot?.navPoints ?? []) as NavPoint[]
   const lastPointNames = useRef('')
@@ -164,13 +164,10 @@ export function NavControl() {
       </p>
       <p style={{ marginBottom: '16px', fontSize: '13px' }}>
         定位状态: {(() => {
-          const now = Date.now();
-          const tfAge = runtime?.lastTfAt ? now - new Date(runtime.lastTfAt).getTime() : 99999;
-          const voxelAge = runtime?.lastVoxelAt ? now - new Date(runtime.lastVoxelAt).getTime() : 99999;
-          const tfFresh = tfAge < 1500;
-          const voxelFresh = voxelAge < 2500;
-          if (tfFresh && voxelFresh) return <strong style={{ color: '#4CAF50' }}>🟢 就绪</strong>;
-          if (tfFresh) return <strong style={{ color: '#FF9800' }}>🟡 仅定位</strong>;
+          const voxelAge = runtime?.lastVoxelAt ? Date.now() - new Date(runtime.lastVoxelAt).getTime() : 99999;
+          if (voxelAge < 3000) return <strong style={{ color: '#4CAF50' }}>🟢 就绪</strong>;
+          const tfAge = runtime?.lastTfAt ? Date.now() - new Date(runtime.lastTfAt).getTime() : 99999;
+          if (tfAge < 2000) return <strong style={{ color: '#FF9800' }}>🟡 仅TF</strong>;
           return <strong style={{ color: '#e94560' }}>🔴 丢失</strong>;
         })()}
         {runtime?.tfPose && (

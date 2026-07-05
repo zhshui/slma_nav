@@ -121,20 +121,20 @@ export function MapManagerPanel() {
       {errorText && <p style={{ color: '#e94560' }}>{errorText}</p>}
       {statusText && <p style={{ color: '#4CAF50' }}>{statusText}</p>}
 
-      <table style={{ width: '100%', borderCollapse: 'collapse', color: '#eee' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', color: '#eee', fontSize: '12px' }}>
         <thead>
           <tr style={{ backgroundColor: '#16213e' }}>
-            <th style={{ padding: '8px', textAlign: 'left' }}>PCD名称</th>
-            <th style={{ padding: '8px', textAlign: 'left' }}>栅格</th>
-            <th style={{ padding: '8px', textAlign: 'left' }}>点云(pcd)</th>
-            <th style={{ padding: '8px', textAlign: 'left' }}>激活</th>
-            <th style={{ padding: '8px', textAlign: 'left' }}>操作</th>
+            <th style={{ padding: '5px 6px', textAlign: 'left' }}>名称</th>
+            <th style={{ padding: '5px 6px', textAlign: 'left' }}>栅格</th>
+            <th style={{ padding: '5px 6px', textAlign: 'left' }}>PCD</th>
+            <th style={{ padding: '5px 6px', textAlign: 'left' }}>激活</th>
+            <th style={{ padding: '5px 6px', textAlign: 'left', whiteSpace: 'nowrap' }}>操作</th>
           </tr>
         </thead>
         <tbody>
           {maps.map((m) => (
             <tr key={m.id} style={{ borderBottom: '1px solid #333' }}>
-              <td style={{ padding: '8px' }}>
+              <td style={{ padding: '4px 6px' }}>
                 {editingName?.id === m.id ? (
                   <input
                     autoFocus
@@ -152,23 +152,23 @@ export function MapManagerPanel() {
                       }
                     }}
                     onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                    style={{ width: '100px', padding: '2px', background: '#0f3460', color: '#eee', border: '1px solid #4CAF50', borderRadius: '3px' }}
+                    style={{ width: '80px', padding: '2px', background: '#0f3460', color: '#eee', border: '1px solid #4CAF50', borderRadius: '3px', fontSize: '12px' }}
                   />
                 ) : (
                   <span
-                    style={{ cursor: 'pointer', borderBottom: '1px dashed #666' }}
+                    style={{ cursor: 'pointer', borderBottom: '1px dashed #666', fontSize: '12px' }}
                     onClick={() => setEditingName({ id: m.id, name: m.name })}
                     title="点击编辑名称"
                   >{m.name}</span>
                 )}
               </td>
-              <td style={{ padding: '8px' }}>{m.yaml_path.split('/').pop()}</td>
-              <td style={{ padding: '8px' }}>
+              <td style={{ padding: '4px 6px', fontSize: '11px', color: '#aaa' }}>{m.yaml_path.split('/').pop()}</td>
+              <td style={{ padding: '4px 6px' }}>
                 {m.pcd_path ? (
-                  <span style={{ color: '#4CAF50' }}>{m.pcd_path.split('/').pop()}</span>
+                  <span style={{ color: '#4CAF50', fontSize: '11px' }}>{m.pcd_path.split('/').pop()}</span>
                 ) : (
                   <select
-                    style={{ padding: '2px', borderRadius: '3px', backgroundColor: '#0f3460', color: '#eee', border: '1px solid #333', maxWidth: '120px' }}
+                    style={{ padding: '2px', borderRadius: '3px', backgroundColor: '#0f3460', color: '#eee', border: '1px solid #333', maxWidth: '100px', fontSize: '11px' }}
                     defaultValue=""
                     onChange={async (e) => {
                       const val = e.target.value
@@ -179,17 +179,17 @@ export function MapManagerPanel() {
                       } catch (e) { setErrorText(String(e)) }
                     }}
                   >
-                    <option value="">选择PCD...</option>
+                    <option value="">选择...</option>
                     {maps.filter(x => x.pcd_path).map(x => (
                       <option key={x.id} value={x.pcd_path}>{x.pcd_path.split('/').pop()}</option>
                     ))}
                   </select>
                 )}
               </td>
-              <td style={{ padding: '8px' }}>{m.active ? '是' : '否'}</td>
-              <td style={{ padding: '8px', display: 'flex', gap: '6px' }}>
+              <td style={{ padding: '4px 6px', fontSize: '12px' }}>{m.active ? '是' : '否'}</td>
+              <td style={{ padding: '4px 6px', display: 'flex', gap: '3px' }}>
                 <button
-                  style={{ ...btnStyle, backgroundColor: switchingId === m.id ? '#666' : '#2196F3', cursor: switchingId ? 'wait' : 'pointer' }}
+                  style={{ ...btnStyle, backgroundColor: switchingId === m.id ? '#666' : '#2196F3', cursor: switchingId ? 'wait' : 'pointer', padding: '3px 6px', fontSize: '11px' }}
                   disabled={!!switchingId}
                   onClick={async () => {
                     setSwitchingId(m.id)
@@ -206,7 +206,7 @@ export function MapManagerPanel() {
                     }
                   }}
                 >{switchingId === m.id ? '切换中...' : '切换'}</button>
-                <button style={{ ...btnStyle, backgroundColor: '#9C27B0' }} onClick={async () => {
+                <button style={{ ...btnStyle, backgroundColor: '#9C27B0', padding: '3px 6px', fontSize: '11px' }} onClick={async () => {
                   try {
                     setStatusText('正在打包...')
                     const res = await fetch(`${apiBase}/api/maps/${m.id}/export`, {
@@ -223,7 +223,7 @@ export function MapManagerPanel() {
                     setStatusText(`已导出 ${m.name}.zip（含 PCD）`)
                   } catch (e) { setErrorText(`导出: ${e}`) }
                 }}>导出</button>
-                <button style={{ ...btnStyle, backgroundColor: '#f44336' }} onClick={() => {
+                <button style={{ ...btnStyle, backgroundColor: '#f44336', padding: '3px 6px', fontSize: '11px' }} onClick={() => {
                   apiRequest(`/api/maps/${m.id}`, t, { method: 'DELETE' })
                     .then(() => refreshSnapshot())
                     .catch(e => setErrorText(String(e)))

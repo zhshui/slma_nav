@@ -28,7 +28,7 @@ export const runtimeState = {
   lidar: [] as Array<{ x: number; y: number }>,
   globalPlan: [] as Array<{ x: number; y: number }>,
   localPlan: [] as Array<{ x: number; y: number }>,
-  voxelGrid: [] as Array<{ x: number; y: number; z: number }>,
+  voxelGrid: [] as Array<{ x: number; y: number }>,
   mapUpdatedAt: null as string | null,
   lastMapAt: null as string | null,
   lastTfAt: null as string | null,

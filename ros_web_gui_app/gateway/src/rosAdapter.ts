@@ -201,7 +201,7 @@ function quaternionToYaw(q: { x?: number; y?: number; z?: number; w?: number }) 
   return Math.atan2(siny, cosy)
 }
 
-function parsePointCloud2(pointsMsg: unknown): Array<{ x: number; y: number; z: number }> {
+function parsePointCloud2(pointsMsg: unknown): Array<{ x: number; y: number }> {
   const msg = pointsMsg as {
     fields?: Array<{ name?: string; offset?: number; datatype?: number }>
     point_step?: number
@@ -214,13 +214,10 @@ function parsePointCloud2(pointsMsg: unknown): Array<{ x: number; y: number; z: 
   const fields = Array.isArray(msg.fields) ? msg.fields : []
   const xField = fields.find((f) => f.name === 'x')
   const yField = fields.find((f) => f.name === 'y')
-  const zField = fields.find((f) => f.name === 'z')
   const pointStep = Number(msg.point_step ?? 0)
   if (!xField || !yField || pointStep <= 0 || xField.datatype !== FLOAT32 || yField.datatype !== FLOAT32) {
     return []
   }
-
-  const hasZ = zField && zField.datatype === FLOAT32
 
   let bytes: Uint8Array
   if (Array.isArray(msg.data)) {
@@ -233,24 +230,21 @@ function parsePointCloud2(pointsMsg: unknown): Array<{ x: number; y: number; z: 
 
   const xOffset = Number(xField.offset ?? 0)
   const yOffset = Number(yField.offset ?? 0)
-  const zOffset = hasZ ? Number(zField.offset ?? 0) : 0
   const littleEndian = !msg.is_bigendian
   const totalPoints = Number(msg.width ?? 0) * Number(msg.height ?? 1)
-  const maxPoints = Math.min(totalPoints || Math.floor(bytes.length / pointStep), 20000)
+  const maxPoints = Math.min(totalPoints || Math.floor(bytes.length / pointStep), 256)
 
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  const maxFieldOffset = hasZ ? Math.max(xOffset, yOffset, zOffset) : Math.max(xOffset, yOffset)
-  const output: Array<{ x: number; y: number; z: number }> = []
+  const output: Array<{ x: number; y: number }> = []
   for (let i = 0; i < maxPoints; i++) {
     const base = i * pointStep
-    if (base + maxFieldOffset + 4 > view.byteLength) {
+    if (base + Math.max(xOffset, yOffset) + 4 > view.byteLength) {
       break
     }
     const x = view.getFloat32(base + xOffset, littleEndian)
     const y = view.getFloat32(base + yOffset, littleEndian)
-    const z = hasZ ? view.getFloat32(base + zOffset, littleEndian) : 0
-    if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
-      output.push({ x, y, z })
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      output.push({ x, y })
     }
   }
 
@@ -477,6 +471,7 @@ export class RosbridgeAdapter implements RosAdapter {
   }
 
   async publishSimpleGoal(goal: { x: number; y: number; yaw: number; frameId: string }): Promise<void> {
+    console.log(`[rosAdapter] publishSimpleGoal → x=${goal.x} y=${goal.y} yaw=${goal.yaw} frame=${goal.frameId}`)
     this.ensureMoveBaseSimpleGoalAdvertised()
     const stamp = rosTime()
     const orientation = yawToQuaternion(goal.yaw)
@@ -599,8 +594,10 @@ export class RosbridgeAdapter implements RosAdapter {
 
   private send(payload: Record<string, unknown>) {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      console.warn(`[rosAdapter] send dropped — socket state: ${this.socket?.readyState ?? 'null'}`, JSON.stringify(payload).slice(0, 200))
       return
     }
+    console.log(`[rosAdapter] send → ${payload.op} ${payload.topic}`)
     this.socket.send(JSON.stringify(payload))
   }
 
