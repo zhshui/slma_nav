@@ -1,6 +1,6 @@
 # 导航系统 MQ 接口文档
 
-> v2.4 | 2026-06-28 | 新增 switch_map 指令
+> v2.4 | 2026-06-30 | AMQP 默认；
 
 ---
 
@@ -69,7 +69,7 @@
 }
 ```
 
-### 3.2 单点导航 ✅
+### 3.2 单点导航（完整） ✅
 
 ```json
 {
@@ -82,9 +82,29 @@
 }
 ```
 
-> `map_id` 可选，传入时先切换地图并发布 `initialpose` 到原点再执行导航。实际通过 `move_base/goal` action 发布导航目标。
+> `map_id` 可选，传入时先切换地图并发布 `initialpose` 到原点再执行导航。完整流程：切换地图 → 启动导航栈 → 等待 move_base → 通过 gateway 发 goal。
 
-### 3.3 多点导航 ✅
+### 3.3 单点导航（轻量） ✅
+
+> 直接将目标点发给 `move_base`，**不**切换地图、**不**通过 gateway 编排、**不**等待导航栈就绪。适用于导航栈已运行、只需更新目标点的场景。
+
+```json
+{
+  "body": {
+    "cmd": "nav_goal",
+    "goal": { "x": 0.23, "y": 1.86, "yaw": 1.57, "frame_id": "map" }
+  }
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `goal.x` | number | 是 | 目标 X（米） |
+| `goal.y` | number | 是 | 目标 Y（米） |
+| `goal.yaw` | number | 是 | 目标朝向（弧度） |
+| `goal.frame_id` | string | 否 | 坐标系，默认 `map` |
+
+### 3.4 多点导航 ✅
 
 ```json
 {
@@ -102,7 +122,7 @@
 
 > `map_id` 可选，传入时先切换地图并发布 `initialpose` 到原点再执行导航。实际流程：waypoints 写入 Task data 目录 → 启动 Task.py → 循环调用 move_base。
 
-### 3.4 暂停 / 继续 / 取消 ✅
+### 3.5 暂停 / 继续 / 取消 ✅
 
 ```json
 { "body": { "cmd": "nav_pause" } }
@@ -110,7 +130,7 @@
 { "body": { "cmd": "nav_cancel" } }
 ```
 
-### 3.5 重定位 ✅
+### 3.6 重定位 ✅
 
 > 发布 `initialpose` 到指定坐标，触发 AMCL/FAST-LIO 重定位。不需要切换地图。
 
@@ -129,15 +149,6 @@
 | `pose.x/y` | number | 是 | 当前位置（米） |
 | `pose.yaw` | number | 是 | 朝向（弧度） |
 | `frame_id` | string | 否 | 坐标系，默认 `camera_init` |
-
-### 3.6 运控启动 / 停止 ✅
-
-> 通过 Gateway HTTP API 间接执行。Web 端运控按钮状态实时同步。
-
-```json
-{ "body": { "cmd": "motor_start" } }
-{ "body": { "cmd": "motor_stop" } }
-```
 
 ### 3.7 地图切换 ✅
 
@@ -159,11 +170,20 @@
 
 **响应**: `cmd/ack` 确认 + 推送更新后的 `map_list`
 
+### 3.8 运控启动 / 停止 ✅
+
+> 通过 Gateway HTTP API 间接执行。Web 端运控按钮状态实时同步。
+
+```json
+{ "body": { "cmd": "motor_start" } }
+{ "body": { "cmd": "motor_stop" } }
+```
+
 ### 指令字段
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `cmd` | string | 是 | `nav_single` `nav_multi` `nav_pause` `nav_resume` `nav_cancel` `map_list` `switch_map` `relocalize` `motor_start` `motor_stop` |
+| `cmd` | string | 是 | `nav_single` `nav_goal` `nav_multi` `switch_map` `nav_pause` `nav_resume` `nav_cancel` `map_list` `relocalize` `motor_start` `motor_stop` |
 | `goal.x/y/yaw` | number | — | 目标坐标(米)/朝向(弧度) |
 | `goal.frame_id` | string | 否 | 坐标系，默认 `camera_init` |
 | `goal.yaw_tolerance` | number | 否 | 朝向容差，默认 0.087 |
@@ -304,8 +324,10 @@
 | 功能 | MQ | 说明 |
 |------|:--:|------|
 | 地图列表查询 | ✅ | 读取 gateway SQLite 数据库 |
-| 地图切换 | ✅ | `switch_map` 独立指令 + `nav_single`/`nav_multi` 传 `map_id` 自动切换 |
-| 单点导航 | ✅ | 通过 `move_base` action |
+| 地图切换（附带导航） | ✅ | `nav_single`/`nav_multi` 传 `map_id` 时自动切换 |
+| 地图切换（独立） | ✅ | `switch_map` 单独切图，推送更新后的 `map_list` |
+| 单点导航 | ✅ | 完整流程：切图 → 启栈 → gateway 发 goal |
+| 单点导航（轻量） | ✅ | 直接发 goal 给 `move_base`，不切图不走 gateway |
 | 多点导航 | ✅ | 写 waypoint JSON → 启动 `Task.py` |
 | 暂停 | ✅ | cancel move_base goal |
 | 继续 | ✅ | 重发上次 goal |
@@ -338,7 +360,7 @@ python3 lite_cog/system/scripts/mq/test_mq.py   # 20/20 passed
 python3 lite_cog/system/scripts/mq/mq_tester.py
 
 # 集成测试 (需要 RabbitMQ + ROS)
-# 已验证: map_list, switch_map, nav_single, nav_multi, nav_pause, nav_cancel,
+# 已验证: map_list, nav_single, nav_goal, nav_multi, switch_map, nav_pause, nav_cancel,
 #         relocalize, motor_start, motor_stop, status/pose/route 推送, 未知指令拒绝
 ```
 

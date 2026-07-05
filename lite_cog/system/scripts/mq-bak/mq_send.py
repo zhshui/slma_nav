@@ -14,8 +14,10 @@ import json
 MSG = json.dumps({
   "header": { "msg_type": "cmd" },
   "body": {
-    "cmd": "nav_goal",
-    "goal": { "x": 0.23, "y": 2, "yaw": 1.57, "frame_id": "map" }
+    "cmd": "nav_single",
+    "map_id": "1",
+    "goal": { "x": 12.34, "y": -5.67, "yaw": 1.57, "frame_id": "camera_init" },
+    "options": { "timeout_ms": 60000, "retry_count": 0 }
   }
   })
 # ═══════════════════════════════════════════════════════════════
