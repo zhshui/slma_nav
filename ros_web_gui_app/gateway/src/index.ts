@@ -58,7 +58,7 @@ async function mqConnect(): Promise<Channel | null> {
         if (hdr.msg_type === 'nav_status') {
           const ns = body.nav_state as string
           console.log(`[gateway] MQ ← status: ${ns}`)
-          const map: Record<string, string> = { idle: 'idle', running: 'running', paused: 'paused', completed: 'stopped', failed: 'stopped', cancelled: 'stopped', '就绪': 'running', '运动中': 'running', '阻塞': 'running', '到达': 'stopped' }
+          const map: Record<string, string> = { idle: 'idle', running: 'running', paused: 'paused', completed: 'stopped', failed: 'stopped', cancelled: 'stopped', '运动中': 'running', '阻塞': 'running', '到达': 'stopped'}
           const mapped = map[ns] || ns
           // gateway 是状态源，MQ status 仅作外部遥测回显，不覆盖本地主动设置的状态
           const localActive = navProcess !== null || taskProcess !== null
