@@ -58,7 +58,7 @@ async function mqConnect(): Promise<Channel | null> {
         if (hdr.msg_type === 'nav_status') {
           const ns = body.nav_state as string
           console.log(`[gateway] MQ ← status: ${ns}`)
-          const map: Record<string, string> = { idle: 'idle', running: 'running', paused: 'paused', completed: 'stopped', failed: 'stopped', cancelled: 'stopped', '运动中': 'running', '阻塞': 'running', '到达': 'stopped'}
+          const map: Record<string, string> = { idle: 'idle', running: 'running', paused: 'paused', completed: 'stopped', failed: 'stopped', cancelled: 'stopped', '就绪': 'running', '运动中': 'running', '阻塞': 'running', '到达': 'stopped' }
           const mapped = map[ns] || ns
           // gateway 是状态源，MQ status 仅作外部遥测回显，不覆盖本地主动设置的状态
           const localActive = navProcess !== null || taskProcess !== null
@@ -1547,6 +1547,16 @@ app.post('/api/nav/param/reconfigure', requireAuth, async (req, res) => {
     res.status(400).json({ error: 'key and value required' })
     return
   }
+
+
+  // ── YAML persistence first (fast, reliable, decoupled from ROS) ──
+  const TEB_YAML = '/home/unitree/go2_nav/lite_cog/nav/src/navigation/config/teb_local_planner_params.yaml'
+  try {
+    // [-0-9.]* handles negative values like -0.1 (old regex [0-9.]* skipped leading -)
+    execSync(`sed -i "s/^\\(\\\\s*${key}:\\\\s*\\)[-0-9.]*/\\\\1${Number(value)}/" ${TEB_YAML}`, { timeout: 3000 })
+    console.log(`[gateway] yaml updated: ${key}=${value} in ${TEB_YAML}`)
+  } catch { /* YAML update is best-effort */ }
+
   try {
     const cmd = `bash -c 'source /opt/ros/noetic/setup.bash && rosrun dynamic_reconfigure dynparam set /move_base/TebLocalPlannerROS ${String(key)} ${Number(value)}'`
     execSync(cmd, { timeout: 10000 })
@@ -1597,8 +1607,6 @@ app.post('/api/nav/param/rosparam', requireAuth, async (req, res) => {
     max_obstacle_height:  ['/move_base/global_costmap/livox_lidar/max_z', '/move_base/local_costmap/livox_lidar/max_z'],
     inflation_radius:     ['/move_base/global_costmap/sob_layer/inflation_radius', '/move_base/local_costmap/sob_layer/inflation_radius'],
     cost_scaling_factor:  ['/move_base/global_costmap/sob_layer/cost_scaling_factor', '/move_base/local_costmap/sob_layer/cost_scaling_factor'],
-    xy_goal_tolerance:    ['/move_base/TebLocalPlannerROS/xy_goal_tolerance'],
-    yaw_goal_tolerance:   ['/move_base/TebLocalPlannerROS/yaw_goal_tolerance'],
   }
 
   try {
