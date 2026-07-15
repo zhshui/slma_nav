@@ -372,8 +372,8 @@ void livox_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
 
         double ts;
         memcpy(&ts, pt_data + off_timestamp, sizeof(double));
-        // Convert timestamp (seconds) to offset_time (microseconds)
-        pt.offset_time = (uint32_t)(ts * 1000000.0);
+        // Convert timestamp (nanoseconds from livox_ros_driver2) to offset_time (nanoseconds)
+        pt.offset_time = (uint32_t)(ts);
     }
 
     PointCloudXYZI::Ptr  ptr(new PointCloudXYZI());

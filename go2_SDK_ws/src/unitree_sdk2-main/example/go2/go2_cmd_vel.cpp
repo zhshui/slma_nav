@@ -161,7 +161,7 @@ public:
       sport_client.Hello();
       ROS_INFO(" -> Hello");
     } else if (cmd == "classic_walk") {
-      sport_client.ClassicWalk();
+      sport_client.ClassicWalk(true);
       ROS_INFO(" -> ClassicWalk");
     } else {
       ROS_WARN("Unknown sport_cmd: [%s]", cmd.c_str());
