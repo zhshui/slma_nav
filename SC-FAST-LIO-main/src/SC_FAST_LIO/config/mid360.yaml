@@ -8,7 +8,7 @@ preprocess:
     lidar_type: 1                # 1 for Livox AVIA serials (including MID360)
     scan_line: 1
     timestamp_unit: 2
-    scan_rate: 10
+    scan_rate: 100
     blind: 0.3
     crop_body_en: true           # Enable robot body self-filtering
     crop_body_min: [-0.8, -0.35, -0.6]  # [x, y, z] min corner in LiDAR frame (m)
@@ -21,11 +21,11 @@ mapping:
     acc_cov: 0.05
     b_gyr_cov: 0.0001
     b_acc_cov: 0.0001
-    extrinsic_est_en: false
+    extrinsic_est_en: true
     extrinsic_T: [0.0, 0.0, 0.0]
-    extrinsic_R: [1, 0, 0,
-                  0, 1, 0,
-                  0, 0, 1]
+    extrinsic_R: [0.9659, 0, -0.2588,
+                  0,      1, 0,
+                  0.2588, 0, 0.9659]
 
 publish:
     path_en: true
