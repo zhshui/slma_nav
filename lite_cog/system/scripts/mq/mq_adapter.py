@@ -545,6 +545,7 @@ class Publisher:
         self._has_arrived = False      # 到达目标后持久化，防止 plan 清空后状态被覆盖
         self._last_arrived_goal_pos = None  # (x, y) 上次到达的目标点位置，用于防止旧路径误判
         self._blocked_since = 0.0      # 阻塞条件首次满足的时间戳，0=未满足，用于 10s 持续判断
+        self._stationary_since = 0.0   # 静止条件首次满足的时间戳，0=未满足，用于等待 TEB 停止
         self._resumed_after_pause = False  # 暂停后通过 MQ nav_goal 恢复了运动
         self._last_pub_pos = None      # (x, y) 上次发布的坐标，用于变化阈值判断
         self._last_pub_yaw = None      # 上次发布的 yaw 角度
@@ -578,6 +579,7 @@ class Publisher:
         self._start_pos = None
         self._has_departed = False
         self._blocked_since = 0.0
+        self._stationary_since = 0.0
     def reset_pose_history(self):
         """收到新目标时清空位姿历史，重置起步状态"""
         self._pose_history.clear()
@@ -587,6 +589,7 @@ class Publisher:
         self._has_departed = False
         self._has_arrived = False    # 新目标 → 重置到达状态
         self._blocked_since = 0.0    # 新目标 → 重置阻塞计时
+        self._stationary_since = 0.0 # 新目标 → 重置静止计时
         self.last_plan = None         # 清除旧规划路径
         self.last_local_plan = None  # 清除旧局部路径
         self._last_local_route_hash = None
@@ -599,8 +602,8 @@ class Publisher:
         位姿历史作为 fallback（1Hz 采样，窗口需 ≥2 秒才能抓到足够样本）。
         """
         now = time.time()
-        STATIONARY_LINEAR = 0.05     # 线速度低于此值视为静止 (m/s)
-        STATIONARY_ANGULAR = 0.05    # 角速度低于此值视为静止 (rad/s)
+        STATIONARY_LINEAR = 0.02     # 线速度低于此值视为静止 (m/s)
+        STATIONARY_ANGULAR = 0.02    # 角速度低于此值视为静止 (rad/s)
 
         # 方法1: cmd_vel 命令速度为零 → 控制器认为已到达，最直接可信
         if self.last_cmd_vel is not None:
@@ -657,6 +660,7 @@ class Publisher:
 
         now = time.time()
         ARRIVAL_GATE = 0.2  # 20cm：到达/阻塞互斥分界线
+        STATIONARY_PERSIST = 4.0  # 静止需持续 4.0 秒才判到达，等待 TEB 完成 debounce+hold
 
         # 0) 计算当前位置到目标点的直连距离（TF 只查一次，后续复用）
         cur_pos = None       # (x, y)
@@ -713,21 +717,34 @@ class Publisher:
                         yaw_diff = min(yaw_diff, 2 * math.pi - yaw_diff)
                         if yaw_diff < YAW_GOAL_TOLERANCE:
                             if self._is_stationary():
-                                if not is_same_goal:
-                                    self._last_arrived_goal_pos = goal_pt
-                                self._has_arrived = True
-                                return "到达"
+                                if self._stationary_since == 0.0:
+                                    self._stationary_since = now
+                                elif now - self._stationary_since >= STATIONARY_PERSIST:
+                                    if not is_same_goal:
+                                        self._last_arrived_goal_pos = goal_pt
+                                    self._has_arrived = True
+                                    self._stationary_since = 0.0
+                                    return "到达"
+                                return "对齐中"
                             else:
+                                self._stationary_since = 0.0
                                 return "对齐中"
                         else:
+                            self._stationary_since = 0.0
                             return "对齐中"
                     else:
                         if self._is_stationary():
-                            if not is_same_goal:
-                                self._last_arrived_goal_pos = goal_pt
-                            self._has_arrived = True
-                            return "到达"
+                            if self._stationary_since == 0.0:
+                                self._stationary_since = now
+                            elif now - self._stationary_since >= STATIONARY_PERSIST:
+                                if not is_same_goal:
+                                    self._last_arrived_goal_pos = goal_pt
+                                self._has_arrived = True
+                                self._stationary_since = 0.0
+                                return "到达"
+                            return "对齐中"
                         else:
+                            self._stationary_since = 0.0
                             return "对齐中"
             except: pass
 
