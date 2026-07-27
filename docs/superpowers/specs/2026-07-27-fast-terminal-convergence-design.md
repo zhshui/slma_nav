@@ -47,31 +47,46 @@ Exit to `path_tracking` only when XY distance exceeds `0.30 m`. This indicates a
 real displacement that should be recovered through the path rather than a
 normal terminal correction.
 
-## Terminal Controller
+## Terminal PID Controller
 
-In `terminal_convergence`, compute XY error in the robot frame and command
-holonomic translation and yaw correction concurrently.
+In `terminal_convergence`, ignore the TEB velocity output and command holonomic
+translation and yaw correction concurrently with an independent PID controller.
+TEB remains responsible for path tracking outside this state.
 
 - Maximum translation speed: `0.20 m/s`
 - Maximum yaw speed: `0.60 rad/s`
-- Translation gain: `1.5`
-- Yaw gain: `2.0`
+- XY gains: `Kp=1.5`, `Ki=0.05`, `Kd=0.10`
+- yaw gains: `Kp=2.0`, `Ki=0.05`, `Kd=0.10`
+- XY integral limit: `0.10 m*s`
+- yaw integral limit: `0.20 rad*s`
+- derivative low-pass factor: `0.20`
 - Translation command decreases continuously near the XY tolerance
 - Yaw command decreases continuously near the yaw tolerance
 - No forced minimum speed inside the terminal controller
 
-The controller uses the original user goal pose, not a shortened local-plan
-endpoint. Signed robot-frame X and Y commands are allowed, so a small correction
-does not require rotating toward the position error first.
+The PID integrates and differentiates global-frame XY error, then rotates the
+resulting translation command into the robot frame. This prevents PID state
+from changing direction merely because the robot is rotating. The controller
+uses the original user goal pose, not a shortened local-plan endpoint. Signed
+robot-frame X and Y commands are allowed, so a small correction does not
+require rotating toward the position error first.
 
 When only one error remains outside tolerance, the corresponding axis continues
 to converge while the aligned axes command zero.
+
+PID state resets when terminal convergence is entered or exited, when a new
+goal arrives, and when the controller cycle time is invalid. Cycle time is
+clamped to `0.01-0.20 s`.
 
 ## Safety And Failure Behavior
 
 - Normal path-tracking limits remain unchanged.
 - Terminal speed caps are lower than the existing cruise speed.
-- Obstacle checking and final velocity saturation remain active.
+- The TEB velocity output is not used during terminal convergence.
+- Before publishing a PID command, check the current footprint and a projected
+  `0.5 s` footprint pose against the local costmap. Publish zero if either pose
+  is in collision or outside the costmap.
+- Final velocity saturation remains active.
 - A new goal clears the terminal latch and starts initial path alignment.
 - A displacement beyond `0.30 m` clears the terminal latch and resumes path
   tracking.
@@ -85,6 +100,7 @@ Unit tests cover:
 - remaining latched between `0.15 m` and `0.30 m`
 - exiting only above `0.30 m`
 - simultaneous signed XY and yaw output
+- PID integral limiting, derivative filtering, and reset behavior
 - velocity caps and zero output inside tolerances
 - five-cycle settled requirement
 
