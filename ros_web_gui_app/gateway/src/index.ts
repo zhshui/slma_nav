@@ -1512,8 +1512,8 @@ app.post('/api/initialpose', requireAuth, async (req, res) => {
 // Nav goal tolerance (runtime dynamic reconfigure)
 app.post('/api/nav/tolerance', requireAuth, async (req, res) => {
   const { xy_tolerance } = req.body ?? {}
-  if (typeof xy_tolerance !== 'number' || xy_tolerance < 0.01 || xy_tolerance > 5) {
-    res.status(400).json({ error: 'xy_tolerance must be 0.01–5 (meters)' })
+  if (typeof xy_tolerance !== 'number' || xy_tolerance < 0.08 || xy_tolerance > 5) {
+    res.status(400).json({ error: 'xy_tolerance must be 0.08–5 (meters)' })
     return
   }
   try {
@@ -1527,6 +1527,59 @@ app.post('/api/nav/tolerance', requireAuth, async (req, res) => {
     console.error('[gateway] Failed to set xy_goal_tolerance:', e.message)
     res.status(500).json({ error: 'Failed to set tolerance: ' + e.message })
   }
+})
+
+const NAV_PARAM_PATHS: Record<string, string[]> = {
+  min_obstacle_height:  ['/move_base/global_costmap/livox_lidar/min_z', '/move_base/local_costmap/livox_lidar/min_z'],
+  max_obstacle_height:  ['/move_base/global_costmap/livox_lidar/max_z', '/move_base/local_costmap/livox_lidar/max_z'],
+  inflation_radius:     ['/move_base/global_costmap/sob_layer/inflation_radius', '/move_base/local_costmap/sob_layer/inflation_radius'],
+  cost_scaling_factor:  ['/move_base/global_costmap/sob_layer/cost_scaling_factor', '/move_base/local_costmap/sob_layer/cost_scaling_factor'],
+  xy_goal_tolerance:    ['/move_base/TebLocalPlannerROS/xy_goal_tolerance'],
+  yaw_goal_tolerance:   ['/move_base/TebLocalPlannerROS/yaw_goal_tolerance'],
+}
+
+function readYamlNumber(file: string, key: string): number | undefined {
+  try {
+    const text = readFileSync(file, 'utf8')
+    const match = text.match(new RegExp(`^\\s*${key}:\\s*([-0-9.]+)`, 'm'))
+    if (!match) return undefined
+    const value = Number(match[1])
+    return Number.isFinite(value) ? value : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function readRosNumber(paramPath: string): number | undefined {
+  try {
+    const raw = execSync(
+      `bash -c 'source /opt/ros/noetic/setup.bash && rosparam get ${paramPath}'`,
+      { timeout: 3000 }
+    ).toString().trim()
+    const value = Number(raw)
+    return Number.isFinite(value) ? value : undefined
+  } catch {
+    return undefined
+  }
+}
+
+app.get('/api/nav/params', requireAuth, (_req, res) => {
+  const COSTMAP_YAML = process.env.COSTMAP_YAML || '/home/unitree/go2_nav/lite_cog/nav/src/navigation/config/common_costmap_params.yaml'
+  const TEB_YAML = '/home/unitree/go2_nav/lite_cog/nav/src/navigation/config/teb_local_planner_params.yaml'
+  const TEB_KEYS = new Set(['xy_goal_tolerance', 'yaw_goal_tolerance'])
+  const params: Record<string, number> = {}
+
+  for (const [key, paths] of Object.entries(NAV_PARAM_PATHS)) {
+    const rosValue = readRosNumber(paths[0])
+    if (rosValue !== undefined) {
+      params[key] = rosValue
+      continue
+    }
+    const yamlValue = readYamlNumber(TEB_KEYS.has(key) ? TEB_YAML : COSTMAP_YAML, key)
+    if (yamlValue !== undefined) params[key] = yamlValue
+  }
+
+  res.json({ ok: true, params })
 })
 
 // Obstacle distance (runtime dynamic reconfigure)
@@ -1556,6 +1609,10 @@ app.post('/api/nav/param/reconfigure', requireAuth, async (req, res) => {
     res.status(400).json({ error: 'key and value required' })
     return
   }
+  if (key === 'xy_goal_tolerance' && value < 0.08) {
+    res.status(400).json({ error: 'xy_goal_tolerance must be at least 0.08 (meters)' })
+    return
+  }
   try {
     const cmd = `bash -c 'source /opt/ros/noetic/setup.bash && rosrun dynamic_reconfigure dynparam set /move_base/TebLocalPlannerROS ${String(key)} ${Number(value)}'`
     execSync(cmd, { timeout: 10000 })
@@ -1573,6 +1630,7 @@ app.post('/api/nav/param/reconfigure', requireAuth, async (req, res) => {
 const RESTART_MB_SCRIPT = process.env.RESTART_MB_SCRIPT || '/home/unitree/go2_nav/lite_cog/system/scripts/nav/restart_move_base.sh'
 let restartMbTimer: NodeJS.Timeout | null = null
 const RESTART_MB_DEBOUNCE_MS = 2000  // batch rapid slider changes into one restart
+const TEB_PARAM_KEYS = new Set(['xy_goal_tolerance', 'yaw_goal_tolerance'])
 
 function scheduleRestartMoveBase() {
   if (restartMbTimer) clearTimeout(restartMbTimer)
@@ -1592,23 +1650,16 @@ app.post('/api/nav/param/rosparam', requireAuth, async (req, res) => {
     res.status(400).json({ error: 'key and value required' })
     return
   }
+  if (key === 'xy_goal_tolerance' && value < 0.08) {
+    res.status(400).json({ error: 'xy_goal_tolerance must be at least 0.08 (meters)' })
+    return
+  }
 
   // All costmap params now use rosparam + YAML + debounced restart
   const DYN_RECONFIG_LAYERS: Record<string, string> = {}
 
   const dynLayer = DYN_RECONFIG_LAYERS[key]
-  const needsRestart = !dynLayer  // STVL params need move_base restart
-
-  // Map frontend key to rosparam paths (global + local costmap)
-  const keyToParams: Record<string, string[]> = {
-    obstacle_range:       ['/move_base/global_costmap/livox_lidar/obstacle_range', '/move_base/local_costmap/livox_lidar/obstacle_range'],
-    min_obstacle_height:  ['/move_base/global_costmap/livox_lidar/min_z', '/move_base/local_costmap/livox_lidar/min_z'],
-    max_obstacle_height:  ['/move_base/global_costmap/livox_lidar/max_z', '/move_base/local_costmap/livox_lidar/max_z'],
-    inflation_radius:     ['/move_base/global_costmap/sob_layer/inflation_radius', '/move_base/local_costmap/sob_layer/inflation_radius'],
-    cost_scaling_factor:  ['/move_base/global_costmap/sob_layer/cost_scaling_factor', '/move_base/local_costmap/sob_layer/cost_scaling_factor'],
-    xy_goal_tolerance:    ['/move_base/TebLocalPlannerROS/xy_goal_tolerance'],
-    yaw_goal_tolerance:   ['/move_base/TebLocalPlannerROS/yaw_goal_tolerance'],
-  }
+  const needsRestart = !dynLayer && !TEB_PARAM_KEYS.has(key)  // STVL params need move_base restart
 
   try {
     if (dynLayer) {
@@ -1621,9 +1672,15 @@ app.post('/api/nav/param/rosparam', requireAuth, async (req, res) => {
       const dynCmd = `bash -c 'source /opt/ros/noetic/setup.bash && rosrun dynamic_reconfigure dynparam set ${servers[0]} ${key} ${Number(value)} & rosrun dynamic_reconfigure dynparam set ${servers[1]} ${key} ${Number(value)} & wait'`
       execSync(dynCmd, { timeout: 10000 })
       console.log(`[gateway] dynparam ${servers[0]} + ${servers[1]} ${key}=${value}`)
+    } else if (TEB_PARAM_KEYS.has(key)) {
+      execSync(
+        `bash -c 'source /opt/ros/noetic/setup.bash && rosrun dynamic_reconfigure dynparam set /move_base/TebLocalPlannerROS ${String(key)} ${Number(value)}'`,
+        { timeout: 10000 }
+      )
+      console.log(`[gateway] reconfigure /move_base/TebLocalPlannerROS ${key}=${value}`)
     } else {
       // ── rosparam set for STVL observation-source params ──
-      const paths = keyToParams[key] || [key]
+      const paths = NAV_PARAM_PATHS[key] || [key]
       if (paths.length >= 2) {
         execSync(`bash -c 'source /opt/ros/noetic/setup.bash && rosparam set ${paths[0]} ${Number(value)} & rosparam set ${paths[1]} ${Number(value)} & wait'`, { timeout: 5000 })
       } else {
@@ -1633,10 +1690,9 @@ app.post('/api/nav/param/rosparam', requireAuth, async (req, res) => {
     }
 
     // ── Also persist to YAML config file so values survive nav restart ──
-    const TEB_KEYS = new Set(['xy_goal_tolerance', 'yaw_goal_tolerance'])
     const COSTMAP_YAML = process.env.COSTMAP_YAML || '/home/unitree/go2_nav/lite_cog/nav/src/navigation/config/common_costmap_params.yaml'
     const TEB_YAML = '/home/unitree/go2_nav/lite_cog/nav/src/navigation/config/teb_local_planner_params.yaml'
-    const YAML_FILE = TEB_KEYS.has(key) ? TEB_YAML : COSTMAP_YAML
+    const YAML_FILE = TEB_PARAM_KEYS.has(key) ? TEB_YAML : COSTMAP_YAML
     // Use frontend key directly as YAML key (frontend keys match YAML keys).
     // Do NOT derive from rosparam path suffix — e.g. min_obstacle_height maps to
     // rosparam .../min_z but YAML uses min_obstacle_height (different from min_z).

@@ -11,7 +11,7 @@ source /home/unitree/go2_nav/lite_cog/nav/devel/setup.bash
 
 echo "[restart_mb] $(date) Killing old move_base ..."
 rosnode kill /move_base 2>/dev/null
-pkill -f "[m]ove_base" 2>/dev/null
+pkill -x move_base 2>/dev/null
 sleep 2
 
 echo "[restart_mb] $(date) Launching new move_base ..."
