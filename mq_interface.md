@@ -268,6 +268,7 @@ AMQP 可使用 `nav.*.cmd`。
   "header": { "msg_type": "nav_route" },
   "body": {
     "route_id": "uuid",
+    "frame_id": "map",
     "ref_cmd_id": "nav-command-msg-id",
     "source": { "x": -1.2, "y": 3.4, "yaw": 0.0 },
     "target": { "x": 12.34, "y": -5.67, "yaw": 1.57 },
@@ -283,14 +284,17 @@ AMQP 可使用 `nav.*.cmd`。
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `route_id` | string | 是 | 路线 ID |
+| `frame_id` | string | 是 | 路径坐标系，来自 ROS `Path.header.frame_id`，空值时为 `map` |
 | `ref_cmd_id` | string | 否 | 触发本次规划的 `nav_goal`/`nav_single` 指令 `header.msg_id` |
-| `source` | object | 是 | 起点（当前位置+朝向） |
-| `target` | object | 是 | 终点（目标坐标+朝向） |
+| `source` | object | 是 | 全局规划路径第一项的位置和朝向 |
+| `target` | object | 是 | 全局规划路径最后一项的位置和朝向 |
 | `path` | array[{x,y}] | 是 | 路径点序列 |
-| `path_length` | number | 是 | 路径总长（米） |
+| `path_length` | number | 是 | 按完整全局路径计算的总长（米） |
 
-全局路径最多发布前 200 个路径点，仅在长度或首尾点发生变化时发布。
-`source` 是发送时查询到的机器人 `base_link` 位姿，不是雷达位姿。
+全局路径最多发布 200 个均匀采样点，并始终保留第一点和最后一点。
+路径完整几何发生变化时发布，因此首尾相同但中间路线变化的重规划也会发送。
+`source`、`target`、`path` 和 `path_length` 均来自同一条全局规划结果，不受
+雷达与 `base_link` 偏移、实时 TF 查询或历史目标状态影响。
 
 `ref_cmd_id` 只出现在 MQ `nav_goal` 或 `nav_single` 对应的第一条全局路径中。
 同一目标后续重规划发布的全局路径不包含该字段；Web 手动目标、`nav_multi`
