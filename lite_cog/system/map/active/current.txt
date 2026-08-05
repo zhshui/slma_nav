@@ -1,1 +1,1 @@
-NAME=亮宇edu
+NAME=scans_6
