@@ -1,6 +1,6 @@
-image: 亮宇edu2.pgm
+image: scans_9.pgm
 resolution: 0.05
-origin: [-8.19168, -9.43017, 0.0]
+origin: [-3.7837, -6.84864, 0.0]
 negate: 0
 occupied_thresh: 0.65
 free_thresh: 0.196

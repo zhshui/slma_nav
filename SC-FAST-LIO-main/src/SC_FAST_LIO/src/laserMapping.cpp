@@ -45,6 +45,7 @@
 #include <Eigen/Core>
 #include "IMU_Processing.hpp"
 #include <nav_msgs/Odometry.h>
+#include <cstdlib>
 #include <nav_msgs/Path.h>
 #include <visualization_msgs/Marker.h>
 #include <pcl_conversions/pcl_conversions.h>
@@ -338,6 +339,8 @@ void livox_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
     custom_msg->point_num = num_points;
     custom_msg->points.resize(num_points);
 
+    double frame_base_ts = -1.0;  // 帧首点绝对时间戳（ns），用于计算帧内相对偏移
+
     const uint8_t* data_ptr = msg->data.data();
 
     // Find field offsets from PointCloud2 message
@@ -372,8 +375,11 @@ void livox_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
 
         double ts;
         memcpy(&ts, pt_data + off_timestamp, sizeof(double));
-        // Convert timestamp (nanoseconds from livox_ros_driver2) to offset_time (nanoseconds)
-        pt.offset_time = (uint32_t)(ts);
+        // livox_ros_driver2 的 PointCloud2 timestamp 是绝对纳秒 (float64, ~1.79e18)，
+        // 直接 (uint32_t) 截断会落在 2^32 溢出边界 → offset_time≈4.29e9 → 帧时长被算成 4.29s → 运动补偿错误
+        // 改为帧内相对偏移（首点为 0，帧内单调递增 ≤ 100ms）
+        if (i == 0) frame_base_ts = ts;
+        pt.offset_time = (uint32_t)(ts - frame_base_ts);
     }
 
     PointCloudXYZI::Ptr  ptr(new PointCloudXYZI());
@@ -573,8 +579,9 @@ void publish_frame_world(const ros::Publisher & pubLaserCloudFull)
     }
 
     /**************** save map ****************/
-    /* 1. make sure you have enough memories
-    /* 2. noted that pcd save will influence the real-time performences **/
+    /* Accumulate dense undistorted points in a bounded buffer,
+     * periodically save to PCD and clear.  This preserves full
+     * point density unlike the ikd-tree (which is 0.5m-downsampled). */
     if (pcd_save_en)
     {
         int size = feats_undistort->points.size();
@@ -597,14 +604,17 @@ void publish_frame_world(const ros::Publisher & pubLaserCloudFull)
         *pcl_wait_save += *laserCloudWorld;
 
         static int scan_wait_num = 0;
-        scan_wait_num ++;
-        if (pcl_wait_save->size() > 0 && pcd_save_interval > 0  && scan_wait_num >= pcd_save_interval)
+        scan_wait_num++;
+        if (pcl_wait_save->size() > 0 && pcd_save_interval > 0 && scan_wait_num >= pcd_save_interval)
         {
-            pcd_index ++;
-            string all_points_dir(map_save_dir + string("/scans_") + to_string(pcd_index) + string(".pcd"));
+            pcd_index++;
+            // Zero-padded segment names for correct sort order during merge
+            char seg_name[512];
+            snprintf(seg_name, sizeof(seg_name), "%s/scans_seg_%05d.pcd", map_save_dir.c_str(), pcd_index);
+            string all_points_dir(seg_name);
             pcl::PCDWriter pcd_writer;
-            cout << "current scan saved to /PCD/" << all_points_dir << endl;
             pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
+            cout << "PCD seg saved: " << all_points_dir << " (" << pcl_wait_save->size() << " pts)" << endl;
             pcl_wait_save->clear();
             scan_wait_num = 0;
         }
@@ -1137,23 +1147,40 @@ int main(int argc, char** argv)
     /**************** save map ****************/
     /* 1. make sure you have enough memories
     /* 2. pcd save will largely influence the real-time performences **/
-    if (pcl_wait_save->size() > 0 && pcd_save_en)
+    if (pcd_save_en)
     {
-        string file_name;
-        string all_points_dir;
-        // Find next available index to avoid overwriting old files
-        do {
-            pcd_index++;
-            file_name = string("scans_") + to_string(pcd_index) + string(".pcd");
-            all_points_dir = map_save_dir + string("/") + file_name;
-        } while (access(all_points_dir.c_str(), F_OK) == 0);
-        pcl::PCDWriter pcd_writer;
-        cout << "current scan saved to /PCD/" << file_name << endl;
-        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
+        if (pcd_save_interval > 0)
+        {
+            // Periodic mode: save remaining buffer as last segment.
+            // Merging is handled by map_stop_hook.sh (more reliable than in-process system())
+            if (pcl_wait_save->size() > 0)
+            {
+                pcd_index++;
+                char last_seg[512];
+                snprintf(last_seg, sizeof(last_seg), "%s/scans_seg_%05d.pcd", map_save_dir.c_str(), pcd_index);
+                pcl::PCDWriter pcd_writer;
+                pcd_writer.writeBinary(last_seg, *pcl_wait_save);
+                cout << "Final seg saved: " << last_seg << " (" << pcl_wait_save->size() << " pts)" << endl;
+            }
+        }
+        else if (pcl_wait_save->size() > 0)
+        {
+            // Original mode (interval=-1): save directly, same behavior as before
+            string file_name;
+            string all_points_dir;
+            do {
+                pcd_index++;
+                file_name = string("scans_") + to_string(pcd_index) + string(".pcd");
+                all_points_dir = map_save_dir + string("/") + file_name;
+            } while (access(all_points_dir.c_str(), F_OK) == 0);
+            pcl::PCDWriter pcd_writer;
+            cout << "current scan saved to /PCD/" << file_name << endl;
+            pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
 
-        // PGM/YAML conversion is now handled by map_stop_hook.sh
-        // (called by web gateway on /api/mapping/stop).
-        // convert_pcd.sh is kept as a manual fallback for direct SIGINT.
+            // PGM/YAML conversion is now handled by map_stop_hook.sh
+            // (called by web gateway on /api/mapping/stop).
+            // convert_pcd.sh is kept as a manual fallback for direct SIGINT.
+        }
     }
 
     fout_out.close();

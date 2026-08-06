@@ -494,9 +494,9 @@ app.post('/api/mapping/start', requireAuth, async (_req, res) => {
     return
   }
   try {
-    // 清空地图 + 杀旧 map_server
+    // 清空地图 + 杀旧 map_server + 删除旧 live_map（避免前端显示旧地图导致机器人位置错位）
     runtimeState.map = { width: 0, height: 0, resolution: 0.05, origin: { x: 0, y: 0 }, data: [], mapUrl: null }
-    exec('pkill -f "[m]ap_server" 2>/dev/null; pkill -f "[M]apServer" 2>/dev/null', () => {})
+    exec('pkill -f "[m]ap_server" 2>/dev/null; pkill -f "[M]apServer" 2>/dev/null; rm -f ' + JSON.stringify(path.join(staticMapsDir, 'live_map.pgm')) + ' ' + JSON.stringify(path.join(staticMapsDir, 'live_map.png')), () => {})
     slamProcess = spawn('bash', [SLAM_SCRIPT], {
       detached: true,
       stdio: 'ignore',

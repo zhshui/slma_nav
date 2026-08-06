@@ -22,7 +22,7 @@ echo "$TAG ====== 停止建图并转换栅格地图 ======"
 LEVEL_PCD="/home/unitree/go2_nav/lite_cog/system/tools/level_pcd"
 
 # ---- 1. 停止 SLAM 进程 ----
-echo "$TAG 1/6 停止 SLAM 进程 (pattern: $SLAM_PROC_PATTERN) ..."
+echo "$TAG 1/7 停止 SLAM 进程 (pattern: $SLAM_PROC_PATTERN) ..."
 PID=$(pgrep -f "$SLAM_PROC_PATTERN" | head -1 2>/dev/null || echo "")
 
 if [ -n "$PID" ]; then
@@ -47,8 +47,28 @@ else
     echo "$TAG   未找到匹配进程, SLAM 可能已停止"
 fi
 
-# ---- 2. 找到最新 PCD 文件 ----
-echo "$TAG 2/6 查找 PCD 文件 ..."
+# ---- 2. 合并分段 PCD（由 SLAM 定期保存的 scans_seg_*.pcd） ----
+echo "$TAG 2/7 合并分段 PCD ..."
+SEG_COUNT=$(ls "$MAP_DIR"/scans_seg_*.pcd 2>/dev/null | wc -l)
+if [ "$SEG_COUNT" -gt 0 ]; then
+    # Find next available scans_N index
+    N=1
+    while [ -f "$MAP_DIR/scans_$N.pcd" ] || [ -d "$MAP_DIR/scans_$N" ]; do N=$((N+1)); done
+    echo "$TAG   发现 $SEG_COUNT 个分段, 合并为 scans_$N.pcd ..."
+    if cd "$MAP_DIR" && pcl_concatenate_points_pcd scans_seg_*.pcd output.pcd 2>/dev/null; then
+        mv "$MAP_DIR/output.pcd" "$MAP_DIR/scans_$N.pcd"
+        rm -f "$MAP_DIR"/scans_seg_*.pcd
+        echo "$TAG   合并成功: scans_$N.pcd, 分段已清理"
+    else
+        rm -f "$MAP_DIR/output.pcd"
+        echo "$TAG   WARNING: 合并失败, 分段文件保留"
+    fi
+else
+    echo "$TAG   无分段文件, 跳过合并"
+fi
+
+# ---- 3. 找到最新 PCD 文件 ----
+echo "$TAG 3/7 查找 PCD 文件 ..."
 PCD_FILE=""
 LATEST_TS=0
 for f in "$MAP_DIR"/*.pcd "$MAP_DIR"/*/*.pcd "$ACTIVE_DIR"/*.pcd; do
@@ -83,7 +103,7 @@ for i in $(seq 1 15); do
 done
 
 # ---- 3. Z 轴水平修正 (level PCD) ----
-echo "$TAG 3/6 Z 轴水平修正 (level_pcd) ..."
+echo "$TAG 4/7 Z 轴水平修正 (level_pcd) ..."
 PCD_LEVELED="${PCD_FILE%.pcd}_leveled.pcd"
 if [ -x "$LEVEL_PCD" ]; then
     echo "$TAG   执行: $LEVEL_PCD \"$PCD_FILE\" \"$PCD_LEVELED\""
@@ -100,7 +120,7 @@ else
 fi
 
 # ---- 4. 用 direct_pcd2grid 转换 PCD → PGM+YAML ----
-echo "$TAG 4/6 启动 pcd2grid 转换 ..."
+echo "$TAG 5/7 启动 pcd2grid 转换 ..."
 
 source /opt/ros/noetic/setup.bash
 source /home/unitree/go2_nav/lite_cog/slam/devel/setup.bash
@@ -126,7 +146,7 @@ roslaunch pcd2grid direct_pcd2grid.launch file_path:="$PCD_FOR_GRID"
 echo "$TAG   pcd2grid 转换完成"
 
 # ---- 5. 组织到地图文件夹 + 同步 active 目录 ----
-echo "$TAG 5/6 组织到地图文件夹并同步 active 目录 ..."
+echo "$TAG 6/7 组织到地图文件夹并同步 active 目录 ..."
 mkdir -p "$ACTIVE_DIR"
 
 # 命名: 参数传入优先, 否则自动递增 scans_N（不覆盖已有文件夹）
@@ -186,7 +206,7 @@ else
 fi
 
 # ---- 6. 注册到数据库 ----
-echo "$TAG 6/6 注册到数据库 ..."
+echo "$TAG 7/7 注册到数据库 ..."
 
 if [ -f "$MAP_FOLDER/${MAP_NAME}.pgm" ] && [ -f "$MAP_FOLDER/${MAP_NAME}.yaml" ]; then
     # 路径指向地图文件夹内的文件

@@ -397,7 +397,7 @@ void ImuProcess::Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 
       static int force_init_count = 0;
       force_init_count++;
 
-      if (acc_var > 0.5 || grav_mag < 0.7 || grav_mag > 1.3)
+      if (acc_var > 0.5 || fabs(grav_mag - G_m_s2) > 2.0)
       {
         if (force_init_count > 50)
         {
