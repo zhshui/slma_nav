@@ -89,6 +89,8 @@
     <!-- 点云距离过滤器：滤除雷达支架/机体自反射点云 -->
     <node name="lidar_range_filter" pkg="hdl_localization" type="lidar_range_filter.py" output="screen">
       <param name="min_range" value="0.35" />
+      <param name="base_frame" value="base_link" />
+      <param name="min_base_z" value="-0.15" />
       <param name="input_topic" value="$(arg raw_points_topic)" />
       <param name="output_topic" value="$(arg points_topic)" />
     </node>
