@@ -45,6 +45,9 @@ export interface MapRecord {
   pcd_path: string
   created_at: string
   active: number
+  registered?: boolean
+  no_yaml?: boolean
+  missing?: boolean
 }
 
 export interface Snapshot {

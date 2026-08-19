@@ -282,6 +282,44 @@ function regenerateMapPng(pgmPath: string): void {
   }
 }
 
+/** DB 地图 + map 文件夹扫描合并（文件夹为准），所有列表数据源统一走这里 */
+function buildMapsList(): any[] {
+  const maps = db.prepare('SELECT * FROM maps ORDER BY created_at DESC').all() as any[]
+  // 标记 DB 记录但文件已缺失的地图
+  for (const m of maps) {
+    m.missing = !m.yaml_path || !existsSync(m.yaml_path)
+  }
+  // 合并 map 文件夹中已存在但未注册到 DB 的地图
+  const mapDir = process.env.MAP_DIR || '/home/unitree/go2_nav/lite_cog/system/map'
+  const registered = new Set(maps.map(m => m.name))
+  const extra: any[] = []
+  let entries: string[] = []
+  try { entries = readdirSync(mapDir) } catch { /* mapDir 不存在 */ }
+  for (const name of entries) {
+    if (registered.has(name)) continue
+    if (name === 'active' || name === 'scans' || name.startsWith('.')) continue
+    const yaml = path.join(mapDir, name, `${name}.yaml`)
+    const pcd = path.join(mapDir, name, `${name}.pcd`)
+    const hasYaml = existsSync(yaml)
+    const hasPcd = existsSync(pcd)
+    if (!hasYaml && !hasPcd) continue
+    let mtime = 0
+    try { mtime = statSync(hasPcd ? pcd : yaml).mtimeMs } catch { /* 忽略 */ }
+    extra.push({
+      id: null,
+      name,
+      yaml_path: hasYaml ? yaml : '',
+      pcd_path: hasPcd ? pcd : '',
+      created_at: new Date(mtime).toISOString(),
+      active: 0,
+      registered: false,
+      no_yaml: !hasYaml,
+    })
+  }
+  extra.sort((a, b) => b.created_at.localeCompare(a.created_at))
+  return [...extra, ...maps]
+}
+
 /** 递归搜索目录下所有 PCD 文件，排除衍生文件 */
 function findAllPcds(dir: string): Array<{ path: string; mtimeMs: number }> {
   const results: Array<{ path: string; mtimeMs: number }> = []
@@ -379,7 +417,7 @@ function readNavPointsFromFiles(): Array<{id: string; name: string; x: number; y
 function snapshot() {
   const navPoints = readNavPointsFromFiles()
   const obstacles = parseObstacleRows(db.prepare('SELECT * FROM virtual_obstacles').all())
-  const maps = db.prepare('SELECT * FROM maps ORDER BY created_at DESC').all()
+  const maps = buildMapsList()
   return {
     runtime: runtimeState,
     navPoints,
@@ -556,7 +594,7 @@ app.post('/api/mapping/stop', requireAuth, async (req, res) => {
           console.log('[gateway] Running MAP_STOP_HOOK:', stopHook)
           execSync(stopHook, { stdio: 'inherit', timeout: 300_000 })
           console.log('[gateway] MAP_STOP_HOOK done')
-          broadcast('maps', db.prepare('SELECT * FROM maps ORDER BY created_at DESC').all())
+          broadcast('maps', buildMapsList())
           const latest = db.prepare('SELECT name, pcd_path FROM maps ORDER BY rowid DESC LIMIT 1').get() as { name: string; pcd_path: string } | undefined
           const pcdName = latest?.pcd_path ? path.basename(latest.pcd_path) : '未知'
           broadcast('mapping_complete', { name: latest?.name || 'unknown', pcdFile: pcdName })
@@ -697,14 +735,66 @@ app.post('/api/maps/save', requireAuth, async (req, res) => {
   db.prepare('DELETE FROM maps WHERE name = ?').run(name)
   const id = newId()
   db.prepare('INSERT INTO maps (id, name, yaml_path, pcd_path, created_at, active) VALUES (?, ?, ?, ?, ?, 0)').run(id, name, yamlPath, pcdPath, new Date().toISOString())
-  broadcast('maps', db.prepare('SELECT * FROM maps ORDER BY created_at DESC').all())
+  broadcast('maps', buildMapsList())
   console.log(`[gateway] Saved map "${name}" -> ${path.join(mapDir, name)}/ (pgm+${pcdPath ? 'pcd' : 'no-pcd'})`)
   res.status(201).json({ id })
 })
 
 app.get('/api/maps', requireAuth, (_req, res) => {
-  const maps = db.prepare('SELECT * FROM maps ORDER BY created_at DESC').all()
-  res.json({ maps })
+  res.json({ maps: buildMapsList() })
+})
+
+// 注册文件夹中未登记的地图（文件夹为准的补充入口）
+app.post('/api/maps/register', requireAuth, (req, res) => {
+  const name = String(req.body?.name ?? '').trim()
+  if (!name || /[\/\\]/.test(name)) {
+    res.status(400).json({ error: 'name required' })
+    return
+  }
+  const mapDir = process.env.MAP_DIR || '/home/unitree/go2_nav/lite_cog/system/map'
+  const yaml = path.join(mapDir, name, `${name}.yaml`)
+  const pcd = path.join(mapDir, name, `${name}.pcd`)
+  if (!existsSync(yaml)) {
+    res.status(400).json({ error: 'yaml not found in map folder' })
+    return
+  }
+  const exists = db.prepare('SELECT id FROM maps WHERE name=?').get(name) as { id: string } | undefined
+  if (exists) {
+    res.json({ ok: true, id: exists.id })
+    return
+  }
+  const id = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`
+  db.prepare('INSERT INTO maps (id, name, yaml_path, pcd_path, created_at, active) VALUES (?,?,?,?,?,0)')
+    .run(id, name, yaml, existsSync(pcd) ? pcd : '', new Date().toISOString())
+  broadcast('maps', buildMapsList())
+  res.json({ ok: true, id })
+})
+
+// 删除地图文件夹（未登记的地图用）：删除文件夹内文件 + DB 记录
+app.post('/api/maps/delete-folder', requireAuth, (req, res) => {
+  const name = String(req.body?.name ?? '').trim()
+  if (!name || /[\/\\]/.test(name) || name === 'active' || name === 'scans') {
+    res.status(400).json({ error: 'invalid map name' })
+    return
+  }
+  const mapDir = process.env.MAP_DIR || '/home/unitree/go2_nav/lite_cog/system/map'
+  const folder = path.join(mapDir, name)
+  if (!existsSync(folder)) {
+    res.status(404).json({ error: 'folder not found' })
+    return
+  }
+  try {
+    for (const f of readdirSync(folder)) {
+      unlinkSync(path.join(folder, f))
+    }
+    rmdirSync(folder)
+  } catch (e) {
+    res.status(500).json({ error: `删除文件夹失败: ${String(e)}` })
+    return
+  }
+  db.prepare('DELETE FROM maps WHERE name=?').run(name)
+  broadcast('maps', buildMapsList())
+  res.json({ ok: true })
 })
 
 // 列出所有可选的 PCD 文件
@@ -793,7 +883,7 @@ free_thresh: 0.196
     pcdPath,
     new Date().toISOString(),
   )
-  broadcast('maps', db.prepare('SELECT * FROM maps ORDER BY created_at DESC').all())
+  broadcast('maps', buildMapsList())
   res.status(201).json({ ok: true })
 })
 
@@ -850,7 +940,7 @@ app.delete('/api/maps/:id', requireAuth, requireRole(['admin']), (req, res) => {
       }
     } catch (e) { console.error('[gateway] cleanup folder error:', e) }
   }
-  broadcast('maps', db.prepare('SELECT * FROM maps ORDER BY created_at DESC').all())
+  broadcast('maps', buildMapsList())
   res.json({ ok: true })
 })
 
@@ -862,7 +952,7 @@ app.put('/api/maps/:id/pcd', requireAuth, (req, res) => {
     return
   }
   db.prepare('UPDATE maps SET pcd_path = ? WHERE id = ?').run(pcd_path, req.params.id)
-  broadcast('maps', db.prepare('SELECT * FROM maps ORDER BY created_at DESC').all())
+  broadcast('maps', buildMapsList())
   res.json({ ok: true })
 })
 
@@ -914,7 +1004,7 @@ app.put('/api/maps/:id/rename', requireAuth, (req, res) => {
   } catch (e) { console.error('[gateway] rename file error:', e) }
 
   db.prepare('UPDATE maps SET name = ?, yaml_path = ?, pcd_path = ? WHERE id = ?').run(newName, newYaml, newPcd || row.pcd_path, req.params.id)
-  broadcast('maps', db.prepare('SELECT * FROM maps ORDER BY created_at DESC').all())
+  broadcast('maps', buildMapsList())
   res.json({ ok: true })
 })
 
@@ -935,7 +1025,7 @@ app.post('/api/maps/:id/switch', requireAuth, async (req, res) => {
   db.prepare('UPDATE maps SET active = 0').run()
   db.prepare('UPDATE maps SET active = 1 WHERE id = ?').run(row.id)
   runtimeState.currentMapId = row.id
-  broadcast('maps', db.prepare('SELECT * FROM maps ORDER BY created_at DESC').all())
+  broadcast('maps', buildMapsList())
 
   // MQ 通知: 地图切换成功（只发切到的那张）
   mqPublish('map_list', 'map_list', {

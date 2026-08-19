@@ -133,7 +133,7 @@ export function MapManagerPanel() {
         </thead>
         <tbody>
           {maps.map((m) => (
-            <tr key={m.id} style={{ borderBottom: '1px solid #333' }}>
+            <tr key={m.id ?? m.name} style={{ borderBottom: '1px solid #333' }}>
               <td style={{ padding: '4px 6px' }}>
                 {editingName?.id === m.id ? (
                   <input
@@ -160,6 +160,30 @@ export function MapManagerPanel() {
                     onClick={() => setEditingName({ id: m.id, name: m.name })}
                     title="点击编辑名称"
                   >{m.name}</span>
+                )}
+                {m.registered === false && (
+                  <>
+                    {' '}
+                    <span style={{ color: '#FF9800', fontSize: '11px' }} title="文件夹中有此地图，但尚未登记到数据库">📄未登记</span>
+                    {m.no_yaml && (
+                      <span style={{ color: '#e94560', fontSize: '11px' }} title="文件夹中没有同名 .yaml/.pgm，切换导航时静态地图将不可用">⚠️无栅格</span>
+                    )}
+                    <button
+                      style={{ ...btnStyle, backgroundColor: '#FF9800', padding: '1px 6px', fontSize: '11px', marginLeft: '4px' }}
+                      disabled={!!m.no_yaml}
+                      title={m.no_yaml ? '缺少 .yaml/.pgm，无法登记' : '登记到数据库'}
+                      onClick={async () => {
+                        try {
+                          await apiRequest('/api/maps/register', t, { method: 'POST', body: JSON.stringify({ name: m.name }) })
+                          await refreshSnapshot()
+                          setStatusText(`已登记「${m.name}」`)
+                        } catch (e) { setErrorText(String(e)) }
+                      }}
+                    >登记</button>
+                  </>
+                )}
+                {m.missing && (
+                  <span style={{ color: '#e94560', fontSize: '11px', marginLeft: '4px' }} title="数据库有记录，但地图文件已不存在">⚠️文件缺失</span>
                 )}
               </td>
               <td style={{ padding: '4px 6px', fontSize: '11px', color: '#aaa' }}>{m.yaml_path.split('/').pop()}</td>
@@ -188,6 +212,23 @@ export function MapManagerPanel() {
               </td>
               <td style={{ padding: '4px 6px', fontSize: '12px' }}>{m.active ? '是' : '否'}</td>
               <td style={{ padding: '4px 6px', display: 'flex', gap: '3px' }}>
+                {m.registered === false && (
+                  <>
+                    <button
+                      style={{ ...btnStyle, backgroundColor: '#f44336', padding: '3px 6px', fontSize: '11px' }}
+                      onClick={async () => {
+                        if (!window.confirm(`确认删除地图文件夹「${m.name}」？文件将一并删除`)) return
+                        try {
+                          await apiRequest('/api/maps/delete-folder', t, { method: 'POST', body: JSON.stringify({ name: m.name }) })
+                          await refreshSnapshot()
+                          setStatusText(`已删除「${m.name}」`)
+                        } catch (e) { setErrorText(String(e)) }
+                      }}
+                    >删除</button>
+                    <span style={{ color: '#666', fontSize: '11px' }}>未登记</span>
+                  </>
+                )}
+                {m.registered !== false && (<>
                 <button
                   style={{ ...btnStyle, backgroundColor: switchingId === m.id ? '#666' : '#2196F3', cursor: switchingId ? 'wait' : 'pointer', padding: '3px 6px', fontSize: '11px' }}
                   disabled={!!switchingId}
@@ -205,7 +246,7 @@ export function MapManagerPanel() {
                       setSwitchingId(null)
                     }
                   }}
-                >{switchingId === m.id ? '切换中...' : '切换'}</button>
+                >{m.id && switchingId === m.id ? '切换中...' : '切换'}</button>
                 <button style={{ ...btnStyle, backgroundColor: '#9C27B0', padding: '3px 6px', fontSize: '11px' }} onClick={async () => {
                   try {
                     setStatusText('正在打包...')
@@ -228,6 +269,7 @@ export function MapManagerPanel() {
                     .then(() => refreshSnapshot())
                     .catch(e => setErrorText(String(e)))
                 }}>删除</button>
+                </>)}
               </td>
             </tr>
           ))}
