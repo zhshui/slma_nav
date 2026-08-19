@@ -17,7 +17,7 @@ TebLocalPlannerROS:
   allow_init_with_backwards_motion: false
   global_plan_viapoint_sep: -1.0
   via_points_ordered: false
-  max_global_plan_lookahead_dist: 5.0
+  max_global_plan_lookahead_dist: 2.0
   global_plan_prune_distance: 0.5
   exact_arc_length: false
   force_reinit_new_goal_dist: 0.5
