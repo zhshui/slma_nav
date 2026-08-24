@@ -56,9 +56,9 @@ TebLocalPlannerROS:
   arrival_hold_cycles: 0      # PID已同时保持位置和yaw，不再增加额外等待
 
   # Obstacles
-  min_obstacle_dist: 0.15
-  inflation_dist: 0.15
-  dynamic_obstacle_inflation_dist: 0.2
+  min_obstacle_dist: 0.3
+  inflation_dist: 0.3
+  dynamic_obstacle_inflation_dist: 0.3
   include_dynamic_obstacles: true
   include_costmap_obstacles: false
   costmap_obstacles_behind_robot_dist: 2.0
