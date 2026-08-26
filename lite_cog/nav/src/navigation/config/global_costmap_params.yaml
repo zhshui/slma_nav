@@ -1,10 +1,10 @@
 
-width: 160
-height: 100
+width: 200
+height: 200
 
 plugins:
   - {name: static_layer, type: "costmap_2d::StaticLayer"} 
   - {name: stvl_obstacle_layer, type: "spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer"}
   - {name: sob_layer,  type: "costmap_2d::InflationLayer"}
-  # - {name: voxel_layer, type: "costmap_2d::VoxelLayer"}    
+  # - {name: voxel_layer, type: "costmap_2d::VoxelLayer"}
   # - {name: inflation_layer, type: "costmap_2d::InflationLayer"}

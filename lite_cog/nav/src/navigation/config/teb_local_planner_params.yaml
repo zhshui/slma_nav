@@ -1,4 +1,10 @@
 TebLocalPlannerROS:
+  # ═══════════════════════════════════════════════════════════════
+  # 障碍物膨胀 — 两组参数分开管理:
+  #   · 全局路径: global_path_obstacle_safe_distance (全局规划器读取, 离障碍安全距离)
+  #   · 局部路径: min_obstacle_dist / inflation_dist (本规划器避障用)
+  # ═══════════════════════════════════════════════════════════════
+  global_path_obstacle_safe_distance: 1
   controller_frequency: 10
   footprint_model:
     type: polygon

@@ -151,6 +151,11 @@ void GlobalPlanner::initialize(std::string name, costmap_2d::Costmap2D* costmap,
                 "trajectory_max_velocity", trajectory_optimizer_config_.max_velocity, 3.0);
         private_nh.param(
                 "trajectory_safe_distance", trajectory_optimizer_config_.safe_distance, 0.5);
+        // 全局路径障碍物膨胀: 优先读 TEB 参数组(集中管理), 否则回退到 trajectory_safe_distance
+        ros::NodeHandle teb_nh("move_base/TebLocalPlannerROS");
+        teb_nh.param("global_path_obstacle_safe_distance",
+                     trajectory_optimizer_config_.safe_distance,
+                     trajectory_optimizer_config_.safe_distance);
         private_nh.param(
                 "trajectory_sample_dt", trajectory_optimizer_config_.sample_dt, 0.1);
         private_nh.param(
