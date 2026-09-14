@@ -66,11 +66,13 @@ class AStarExpansion : public Expander {
         virtual ~AStarExpansion() {}
         bool calculatePotentials(unsigned char* costs, double start_x, double start_y, double end_x, double end_y, int cycles,
                                 float* potential);
+        bool getParentPath(double start_x, double start_y, double end_x, double end_y,
+                           std::vector<std::pair<float, float>>& path) const;
     private:
-        void add(unsigned char* costs, float* potential, float prev_potential, int next_i, int end_x, int end_y);
+        void add(unsigned char* costs, float* potential, float prev_potential, int next_i, int end_x, int end_y, int parent);
         std::vector<Index> queue_;
+        std::vector<int> parents_;
 };
 
 } //end namespace global_planner
 #endif
-

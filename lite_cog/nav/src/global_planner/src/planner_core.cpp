@@ -386,8 +386,12 @@ bool GlobalPlanner::getPlanFromPotential(double start_x, double start_y, double 
     std::vector<std::pair<float, float> > path;
 
     if (!path_maker_->getPath(potential_array_, start_x, start_y, goal_x, goal_y, path)) {
-        ROS_ERROR("NO PATH!");
-        return false;
+        auto* astar = dynamic_cast<AStarExpansion*>(planner_);
+        if (!astar || !astar->getParentPath(start_x, start_y, goal_x, goal_y, path)) {
+            ROS_ERROR("NO PATH!");
+            return false;
+        }
+        ROS_WARN_THROTTLE(5.0, "Gradient traceback failed; using the collision-checked A* parent path");
     }
 
     ros::Time plan_time = ros::Time::now();

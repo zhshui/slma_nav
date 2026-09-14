@@ -23,7 +23,7 @@ TebLocalPlannerROS:
   allow_init_with_backwards_motion: true
   global_plan_viapoint_sep: -1.0
   via_points_ordered: false
-  max_global_plan_lookahead_dist: 2.0
+  max_global_plan_lookahead_dist: 1.0
   global_plan_prune_distance: 0.5
   exact_arc_length: false
   force_reinit_new_goal_dist: 0.5
@@ -37,7 +37,7 @@ TebLocalPlannerROS:
 
   # Robot
   max_vel_x: 0.8
-  max_vel_x_backwards: 0.08
+  max_vel_x_backwards: 0.3
   max_vel_y: 0.1
   max_vel_trans: 0.8
   max_vel_theta: 0.8
@@ -97,7 +97,7 @@ TebLocalPlannerROS:
   # weight_acc_lim_y: 1
   weight_acc_lim_theta: 10
   weight_kinematics_nh: 1000   #default 1000
-  weight_kinematics_forward_drive: 40 # prefer forward travel along the global path
+  weight_kinematics_forward_drive: 0 # 0 = 允许后退 (user requested 2026-09-14); 40 = prefer forward travel only
   weight_kinematics_turning_radius: 0 #default 1
   weight_optimaltime: 5
   weight_shortest_path: 0  #default 0, avoid cutting corners away from the global path
