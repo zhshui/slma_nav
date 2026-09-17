@@ -23,7 +23,7 @@ TebLocalPlannerROS:
   allow_init_with_backwards_motion: true
   global_plan_viapoint_sep: -1.0
   via_points_ordered: false
-  max_global_plan_lookahead_dist: 1.0
+  max_global_plan_lookahead_dist: 2.0
   global_plan_prune_distance: 0.5
   exact_arc_length: false
   force_reinit_new_goal_dist: 0.5
@@ -63,7 +63,7 @@ TebLocalPlannerROS:
 
   # Obstacles
   min_obstacle_dist: 0.15
-  inflation_dist: 0.15
+  inflation_dist: 0.8
   dynamic_obstacle_inflation_dist: 0.2
   include_dynamic_obstacles: true
   include_costmap_obstacles: false

@@ -294,6 +294,12 @@ def h_switch_map(body, ref):
     _ack(ref, "switch_map", "accepted")
     rospy.loginfo(f"[MQ] switch_map: {mid}")
 
+def h_nav_only(body, ref):
+    """只启动当前地图的单点导航模式，不发送目标点。"""
+    ok, msg = _call_gateway("/api/nav/command", {"command": "nav-only"})
+    if ok: _ack(ref, "nav_only", "accepted")
+    else: _ack(ref, "nav_only", "rejected", msg[:200])
+
 def h_nav_single(body, ref, attach_route_ref=True):
     g = body.get("goal", {})
     x, y, yaw = g.get("x"), g.get("y"), g.get("yaw")
@@ -554,6 +560,7 @@ def h_motor_move(body, ref):
     else: _ack(ref, "motor_move", "rejected", "publisher not ready")
 
 HANDLERS = {"map_list": h_map_list, "nav_single": h_nav_single,
+            "nav_only": h_nav_only,
             "nav_goal": h_nav_goal, "switch_map": h_switch_map,
             "nav_multi": h_nav_multi, "nav_pause": h_nav_pause, "nav_resume": h_nav_resume,
             "nav_cancel": h_nav_cancel, "relocalize": h_relocalize,

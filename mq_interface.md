@@ -121,7 +121,23 @@ AMQP 可使用 `nav.*.cmd`。
 | `goal.yaw` | number | 是 | 目标朝向（弧度） |
 | `goal.frame_id` | string | 否 | 坐标系，默认 `map` |
 
-### 3.4 多点导航 ✅
+### 3.4 单点导航（仅启动） ✅
+
+```json
+{
+  "header": { "msg_type": "cmd", "msg_id": "nav-only-001" },
+  "body": { "cmd": "nav_only" }
+}
+```
+
+使用当前地图，通过 Gateway 的 `nav-only` 命令启动单点导航模式。
+不需要也不发送 `goal`，不启动多点任务，不切换地图，不额外启动雷达或运控。
+导航就绪后，可通过 `nav_goal` 单独发送目标点。
+Gateway 接受启动请求后返回 `cmd.ack`，其中 `cmd` 为 `nav_only`、`result`
+为 `accepted`；调用失败则返回 `rejected` 和失败原因。
+`accepted` 表示启动请求已接受，不代表定位及导航已就绪。
+
+### 3.5 多点导航 ✅
 
 ```json
 {
@@ -138,7 +154,7 @@ AMQP 可使用 `nav.*.cmd`。
 
 > `map_id` 可选，传入时先切换地图并发布 `initialpose` 到原点再执行导航。实际流程：waypoints 写入 Task data 目录 → 启动 Task.py → 循环调用 move_base。
 
-### 3.5 暂停 / 继续 / 取消 ✅
+### 3.6 暂停 / 继续 / 取消 ✅
 
 ```json
 { "body": { "cmd": "nav_pause" } }
@@ -146,7 +162,7 @@ AMQP 可使用 `nav.*.cmd`。
 { "body": { "cmd": "nav_cancel" } }
 ```
 
-### 3.6 重定位 ✅
+### 3.7 重定位 ✅
 
 > 发布 `initialpose` 到指定坐标，触发 AMCL/FAST-LIO 重定位。不需要切换地图。
 
@@ -166,7 +182,7 @@ AMQP 可使用 `nav.*.cmd`。
 | `pose.yaw` | number | 是 | 朝向（弧度） |
 | `frame_id` | string | 否 | 坐标系，默认 `map` |
 
-### 3.7 地图切换 ✅
+### 3.8 地图切换 ✅
 
 > 独立的地图切换指令。切换后发布 `initialpose` 到原点，并推送更新后的 `map_list`。不需要导航。
 
@@ -186,7 +202,7 @@ AMQP 可使用 `nav.*.cmd`。
 
 **响应**: `cmd.ack` 确认 + 推送更新后的 `map_list`
 
-### 3.8 运控启动 / 停止 ✅
+### 3.9 运控启动 / 停止 ✅
 
 > 通过 Gateway HTTP API 间接执行。Web 端运控按钮状态实时同步。
 
@@ -195,7 +211,7 @@ AMQP 可使用 `nav.*.cmd`。
 { "body": { "cmd": "motor_stop" } }
 ```
 
-### 3.9 姿态与瞬时速度控制 ✅
+### 3.10 姿态与瞬时速度控制 ✅
 
 ```json
 { "body": { "cmd": "motor_stand" } }
@@ -219,7 +235,7 @@ AMQP 可使用 `nav.*.cmd`。
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `cmd` | string | 是 | `nav_single` `nav_goal` `nav_multi` `switch_map` `nav_pause` `nav_resume` `nav_cancel` `map_list` `relocalize` `motor_start` `motor_stop` `motor_stand` `motor_sit` `motor_damp` `motor_move` |
+| `cmd` | string | 是 | `nav_only` `nav_single` `nav_goal` `nav_multi` `switch_map` `nav_pause` `nav_resume` `nav_cancel` `map_list` `relocalize` `motor_start` `motor_stop` `motor_stand` `motor_sit` `motor_damp` `motor_move` |
 | `goal.x/y/yaw` | number | — | 目标坐标(米)/朝向(弧度) |
 | `goal.frame_id` | string | 否 | `nav_goal` 使用的坐标系，默认 `map`；`nav_single` 固定使用 `map` |
 | `waypoints[].id` | string | — | 途经点标识 |
@@ -474,6 +490,7 @@ AMQP 可使用 `nav.*.cmd`。
 | 地图切换（独立） | ✅ | `switch_map` 单独切图，推送更新后的 `map_list` |
 | 单点导航 | ✅ | 完整流程：切图 → 启栈 → gateway 发 goal |
 | 单点导航（轻量） | ✅ | 直接发 goal 给 `move_base`，不切图不走 gateway |
+| 单点导航（仅启动） | ✅ | `nav_only`：使用当前地图启动单点导航模式，不发目标点 |
 | 多点导航 | ✅ | 写 waypoint JSON → 启动 `Task.py` |
 | 暂停 | ✅ | cancel move_base goal |
 | 继续 | ✅ | 重发上次 goal |

@@ -1,6 +1,6 @@
-image: scans_2.pgm
+image: 0915富力地面.pgm
 resolution: 0.05
-origin: [-6.78499, -49.0279, 0.0]
+origin: [-119.1, -51.9563, 0.0]
 negate: 0
 occupied_thresh: 0.65
 free_thresh: 0.196
