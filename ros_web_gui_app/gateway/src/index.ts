@@ -614,9 +614,32 @@ app.post('/api/maps/save', requireAuth, async (req, res) => {
     return
   }
 
+  if (name === '.' || name === '..' || /[/\\\x00-\x1f]/.test(name)) {
+    res.status(400).json({ error: '地图名称不能包含路径分隔符或控制字符' })
+    return
+  }
+  const userPcd = req.body?.pcd_path ? String(req.body.pcd_path).trim() : null
+  if (userPcd && (!userPcd.toLowerCase().endsWith('.pcd') || !existsSync(userPcd) || !statSync(userPcd).isFile())) {
+    res.status(400).json({ error: '所选 PCD 不存在或无效，请重新选择' })
+    return
+  }
+  const submittedGrid = req.body?.data
+  if (submittedGrid !== undefined && (
+    !submittedGrid || !Number.isInteger(submittedGrid.width) || submittedGrid.width <= 0 ||
+    !Number.isInteger(submittedGrid.height) || submittedGrid.height <= 0 ||
+    !Number.isFinite(submittedGrid.resolution) || submittedGrid.resolution <= 0 ||
+    !Number.isFinite(submittedGrid.origin?.x) || !Number.isFinite(submittedGrid.origin?.y) ||
+    (submittedGrid.origin?.yaw !== undefined && !Number.isFinite(submittedGrid.origin.yaw)) ||
+    !Array.isArray(submittedGrid.data) || submittedGrid.data.length !== submittedGrid.width * submittedGrid.height ||
+    submittedGrid.data.some((v: unknown) => typeof v !== 'number' || !Number.isInteger(v) || v < -1 || v > 100)
+  )) {
+    res.status(400).json({ error: '编辑地图数据无效，请重新加载地图后保存' })
+    return
+  }
+
   /** 将栅格数据写入指定地图文件夹 */
   function writeMapFiles(
-    grid: { width: number; height: number; resolution: number; origin: { x: number; y: number }; data: number[] },
+    grid: { width: number; height: number; resolution: number; origin: { x: number; y: number; yaw?: number }; data: number[] },
     mapDir: string,
   ): { pgmPath: string; yamlPath: string } {
     const mapFolder = path.join(mapDir, name)
@@ -640,7 +663,7 @@ app.post('/api/maps/save', requireAuth, async (req, res) => {
     }
     writeFileSync(pgmPath, Buffer.concat([header, img]))
     // YAML 中 image 使用相对路径，PGM 与 YAML 在同一文件夹
-    writeFileSync(yamlPath, `image: ${name}.pgm\nresolution: ${resolution}\norigin: [${ox}, ${oy}, 0.0]\nnegate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.196\n`)
+    writeFileSync(yamlPath, `image: ${name}.pgm\nresolution: ${resolution}\norigin: [${ox}, ${oy}, ${grid.origin?.yaw ?? 0}]\nnegate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.196\n`)
     return { pgmPath, yamlPath }
   }
 
@@ -653,6 +676,7 @@ app.post('/api/maps/save', requireAuth, async (req, res) => {
 
     // 根目录下的 PCD 用移动（rename），避免残留重复文件；其他路径用复制
     function moveOrCopy(src: string, dst: string, label: string) {
+      if (path.resolve(src) === path.resolve(dst)) return
       if (path.dirname(src) === mapDir) {
         renameSync(src, dst)
         console.log(`[gateway] PCD moved (root cleanup): ${src} -> ${dst} (${label})`)
@@ -695,7 +719,7 @@ app.post('/api/maps/save', requireAuth, async (req, res) => {
   }
 
   const mapDir = process.env.MAP_DIR || '/home/unitree/go2_nav/lite_cog/system/map'
-  const gridData = req.body?.data as { width: number; height: number; resolution: number; origin: { x: number; y: number }; data: number[] } | undefined
+  const gridData = req.body?.data as { width: number; height: number; resolution: number; origin: { x: number; y: number; yaw?: number }; data: number[] } | undefined
 
   let pgmPath = ''
   let yamlPath = ''
@@ -723,13 +747,12 @@ app.post('/api/maps/save', requireAuth, async (req, res) => {
       copyFileSync(path.join(staticMapsDir, 'live_map.pgm'), pgmPath)
       writeFileSync(yamlPath, `image: ${name}.pgm\nresolution: ${cachedMap.resolution}\norigin: [${cachedMap.origin.x}, ${cachedMap.origin.y}, 0.0]\nnegate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.196\n`)
     } else {
-      res.status(400).json({ error: '/map 无数据。请先在编辑器中点「发布」将栅格推送到 /map 话题，再保存。' })
+      res.status(400).json({ error: '/map 无数据。请在地图编辑器中使用「选择 PCD 保存地图」直接保存编辑结果。' })
       return
     }
   }
 
   // 尝试复制 PCD 到地图文件夹（优先使用用户选择的）
-  const userPcd = req.body?.pcd_path ? String(req.body.pcd_path).trim() : null
   const pcdPath = copyPcdToMapFolder(mapDir, userPcd || undefined)
 
   db.prepare('DELETE FROM maps WHERE name = ?').run(name)

@@ -18,7 +18,7 @@ import {
   ModifyGridCommand,
   type GridCellChange,
 } from '../utils/CommandManager';
-import { publishGridToMap } from './MapEditor.GatewaySave';
+import { MapEditorSaveDialog } from './MapEditorSaveDialog';
 import { useGatewayContext } from './gateway/GatewayProvider';
 import './MapEditor.css';
 
@@ -88,6 +88,7 @@ export function MapEditor({ connection, onClose, gatewayToken }: MapEditorProps)
   const layerManagerRef = useRef<LayerManager | null>(null);
   const topoLayerRef = useRef<TopoLayer | null>(null);
   const occupancyGridLayerRef = useRef<OccupancyGridLayer | null>(null);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [currentTool, setCurrentTool] = useState<EditTool>('move');
   const [brushSize, setBrushSize] = useState<number>(0.05);
   const [mousePosition, setMousePosition] = useState<{ x: number; y: number } | null>(null);
@@ -1820,45 +1821,6 @@ export function MapEditor({ connection, onClose, gatewayToken }: MapEditorProps)
   };
 
 
-  const handlePublishGridToMap = async () => {
-    const grid = occupancyGridLayerRef.current?.getMapMessage();
-    if (!grid || !grid.info || !grid.data) {
-      toast.error("没有可保存的栅格地图数据");
-      return;
-    }
-    try {
-      // 优先走网关 API（会写入 PGM+PNG 并更新 telemetry），rosbridge 直连作为备用
-      if (gatewayToken) {
-        const { apiBase } = await import('../api/gatewayApi');
-        const res = await fetch(`${apiBase}/api/map/publish`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${gatewayToken}`,
-          },
-          body: JSON.stringify({
-            width: grid.info.width,
-            height: grid.info.height,
-            resolution: grid.info.resolution,
-            origin: { x: grid.info.origin.position.x, y: grid.info.origin.position.y },
-            data: Array.isArray(grid.data) ? grid.data : Array.from(grid.data),
-          }),
-        });
-        if (!res.ok) throw new Error(await res.text());
-      } else if (connection?.isConnected()) {
-        publishGridToMap(connection, grid);
-      } else {
-        toast.error("未连接到 rosbridge，请先登录网关或连接 ROS");
-        return;
-      }
-      toast.success("已发布到 /map 话题");
-    } catch (error) {
-      console.error("发布栅格地图失败:", error);
-      toast.error("发布失败: " + (error instanceof Error ? error.message : "未知错误"));
-    }
-  };
-
-
   const handleResetView = () => {
     const camera = cameraRef.current;
     const controls = controlsRef.current;
@@ -1917,6 +1879,13 @@ export function MapEditor({ connection, onClose, gatewayToken }: MapEditorProps)
 
   return (
     <div className="MapEditor">
+      {showSaveDialog && (
+        <MapEditorSaveDialog
+          token={gatewayToken || gatewayCtx.token}
+          getGrid={() => occupancyGridLayerRef.current?.getMapMessage() ?? null}
+          onClose={() => setShowSaveDialog(false)}
+        />
+      )}
       <div className="EditorHeader">
         <h2>地图编辑</h2>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
@@ -1963,7 +1932,7 @@ export function MapEditor({ connection, onClose, gatewayToken }: MapEditorProps)
           </button>
           <button
             className="SaveButton"
-            onClick={handlePublishGridToMap}
+            onClick={() => setShowSaveDialog(true)}
             type="button"
             style={{
               padding: "8px 16px",
@@ -1974,9 +1943,9 @@ export function MapEditor({ connection, onClose, gatewayToken }: MapEditorProps)
               cursor: "pointer",
               fontSize: "14px",
             }}
-            title="发布编辑后的栅格地图到 /map 话题"
+            title="选择配套 PCD，直接保存编辑后的地图"
           >
-            📡 发布到 /map
+            💾 选择 PCD 保存地图
           </button>
           <button className="CloseButton" onClick={onClose} type="button">
             ×
